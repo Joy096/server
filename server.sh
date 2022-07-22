@@ -13,4 +13,8 @@ sudo ufw allow 22
 sudo ufw allow 80
 sudo ufw allow 443
 yes Y | sudo ufw enable
-
+wget -N --no-check-certificate https://github.com/teddysun/across/raw/master/bbr.sh
+chmod +x bbr.sh
+sudo bash bbr.sh
+sudo dpkg-reconfigure tzdata
+sudo reboot
