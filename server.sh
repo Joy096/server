@@ -16,7 +16,10 @@ yes Y | sudo ufw enable
 wget -N --no-check-certificate https://github.com/teddysun/across/raw/master/bbr.sh
 chmod +x bbr.sh
 sudo bash bbr.sh
-sudo dpkg-reconfigure tzdata
+sudo locale-gen ru_UA.utf8
+sudo update-locale LANG=ru_UA.UTF8
+locale | sudo tee /etc/default/locale
+sudo timedatectl set-timezone Europe/Kiev
 sudo wget -P /root/ https://raw.githubusercontent.com/Joy096/server/main/updater.sh
 sudo chmod +x /root/updater.sh
 sudo echo -e "# Edit this file to introduce tasks to be run by cron.
