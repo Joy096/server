@@ -13,9 +13,8 @@ sudo ufw allow 22
 sudo ufw allow 80
 sudo ufw allow 443
 yes Y | sudo ufw enable
-wget -N --no-check-certificate https://github.com/teddysun/across/raw/master/bbr.sh
-chmod +x bbr.sh
-sudo bash bbr.sh
+echo -e "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr" | sudo tee --append /etc/sysctl.conf
+sudo sysctl -p
 sudo locale-gen ru_UA.utf8
 sudo update-locale LANG=ru_UA.UTF8
 sudo dpkg-reconfigure locales
