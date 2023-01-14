@@ -1,0 +1,57 @@
+{
+  "name": "Загрузчик приложений",
+  "headline": "Загрузчик приложений",
+  "extension": "Версия MSX: 1.0.0",
+  "version": "1.0.0",
+  "parameter": "content:http://130.61.244.184:81/msx/start.json",
+  "note": "For this service, Media Station X 0.1.120 or higher is needed",
+  "action": "[settings:validate_links:0|home]",
+  "dictionary": "http://130.61.244.184:81/msx/lang/ru.json",
+  "pages": [
+    {
+      "items": [
+        {
+          "id": "description",
+          "type": "space",
+          "layout": "5,0,5,5",
+          "text": ""
+        },
+        {
+          "type": "control",
+          "layout": "0,0,5,1",
+          "image": "http://130.61.244.184:81/msx-logo.png",
+          "label": "Lampa",
+          "action": "link:http://130.61.244.184:81",
+          "selection": {
+            "important": true,
+            "action": "update:content:description",
+            "data": {
+              "text": [
+                "{txt:msx-white: Lampa} — Просмотр популярных фильмов, новинок, топ и т.д"
+              ]
+            }
+          }
+        },
+        {
+          "type": "control",
+          "layout": "0,1,5,1",
+          "image": "http://msx.benzac.de/img/icon_raw.png",
+          "label": "FXMLPlayer",
+          "action": "execute:http://msxplayer.ru/msx/get-start-action",
+          "selection": {
+            "important": true,
+            "action": "update:content:description",
+            "data": {
+              "text": [
+                "{txt:msx-white: FXMLPlayer} - это программа для удобного просмотра тв, фильмов, телепередач и другого.{br}",
+                "{ico:msx-green:add-circle} Поддержка {txt:msx-white:лучших} порталов FXML {txt:msx-white: RFork Online, KinoPub, CoolTV, KinoBoom} {br}",
+                "{ico:msx-green:add-circle} Возможность загрузки фильмов и сериалов из приложения HDVideoBox, LazyMedia Deluxe{br}{br}",
+                "{ico:info}Данная версия грузит обновленную версию Media Station X из интернета, так как для плейлиста FXMLPlayer требуется версия Media Station X не ниже версии {txt:msx-white:0.1.120}{br}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}  
