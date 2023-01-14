@@ -44,6 +44,6 @@ sudo echo -e "# Edit this file to introduce tasks to be run by cron.
 # For more information see the manual pages of crontab(5) and cron(8)
 #
 # m h  dom mon dow   command
-0 4 * * * bash /root/updater.sh > /root/updater.log" | sudo crontab -
+0 4 * * * bash updater.sh > updater.log" | sudo crontab -
 sudo /etc/init.d/cron restart
 sudo reboot
