@@ -1,6 +1,6 @@
 #!/bin/bash
 
-apt update
-apt --yes full-upgrade
+apt-get update
+apt-get --yes full-upgrade
 yes Y | apt autoremove
 /sbin/reboot
