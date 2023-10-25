@@ -2,5 +2,5 @@
 
 apt-get update
 apt-get --yes full-upgrade
-yes Y | apt autoremove
+yes Y | apt-get autoremove
 /sbin/reboot
