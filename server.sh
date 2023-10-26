@@ -4,8 +4,6 @@ sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
 sudo chown -R root. /root/.ssh/
 sudo apt update
 sudo apt full-upgrade -y
-sudo apt install aptitude -y
-sudo aptitude upgrade -y
 yes Y | sudo apt autoremove
 sudo systemctl stop netfilter-persistent
 sudo systemctl disable netfilter-persistent
@@ -47,4 +45,6 @@ sudo echo -e "# Edit this file to introduce tasks to be run by cron.
 #
 # m h  dom mon dow   command
 0 4 * * * bash updater.sh > updater.log" | sudo crontab -
+sudo apt install aptitude -y
+sudo aptitude upgrade -y
 sudo /etc/init.d/cron restart
