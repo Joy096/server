@@ -30,8 +30,8 @@ fi
 # Создаем образ для установки
 sudo bash chromeos-install.sh -src chromeos.bin -dst chromeos.img
 
-# Удаляем все файлы из директории, кроме chromeos.img
-find . ! -name 'chromeos.img' -exec rm -rf {} +
+# Удаляем все файлы из директории, кроме chromeos.img и usb_chromeos_win.sh
+find . -type f ! -name 'chromeos.img' ! -name 'usb_chromeos_win.sh' -exec rm -f {} +
 
 
 
