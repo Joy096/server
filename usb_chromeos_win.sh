@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Устанавливаем (обновляем) нужные пакеты
+command -v wget pv cgpt tar unzip || sudo apt update && sudo apt -y install pv cgpt tar unzip
+
 # Выводим текст и запрашиваем ссылки
 echo "Введите ссылку для загрузки ChromeOS recovery:"
 read -r recovery_link
@@ -9,9 +12,6 @@ read -r brunch_link
 # Загружаем файлы ChromeOS recovery и brunch
 wget "$recovery_link" -O chromeos.bin.zip
 wget "$brunch_link" -O brunch.tar.gz
-
-# Устанавливаем (обновляем) нужные пакеты
-command -v wget pv cgpt tar unzip || sudo apt update && sudo apt -y install pv cgpt tar unzip
 
 # Разархивируем архив brunch
 tar zxvf brunch.tar.gz
@@ -29,6 +29,9 @@ fi
 
 # Создаем образ для установки
 sudo bash chromeos-install.sh -src chromeos.bin -dst chromeos.img
+
+# Удаляем все файлы из директории, кроме chromeos.img
+find . ! -name 'chromeos.img' -exec rm -rf {} +
 
 
 
