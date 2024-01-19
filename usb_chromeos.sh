@@ -5,18 +5,14 @@ mkdir -p ~/chrome_os_temporary
 mkdir -p ~/chrome_os
 cd ~/chrome_os_temporary
 
-# Выводим текст и запрашиваем ссылку
+# Выводим текст и запрашиваем ссылки
 echo "Введите ссылку для загрузки ChromeOS recovery:"
 read -r recovery_link
-
-# Загружаем файл ChromeOS recovery по указанной ссылке
-wget "$recovery_link" -O chromeos.bin.zip
-
-# Выводим текст и запрашиваем ссылку
 echo "Введите ссылку для загрузки brunch:"
 read -r brunch_link
 
-# Загружаем файл brunch по указанной ссылке
+# Загружаем файлы ChromeOS recovery и brunch
+wget "$recovery_link" -O chromeos.bin.zip
 wget "$brunch_link" -O brunch.tar.gz
 
 # Устанавливаем (обновляем) нужные пакеты
