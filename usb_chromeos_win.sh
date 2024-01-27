@@ -40,4 +40,4 @@ fi
 sudo bash chromeos-install.sh -src chromeos.bin -dst "$chromeos_link".img
 
 # Удаляем все файлы из директории, кроме chromeos.img и usb_chromeos_win.sh
-find . -type f ! -name 'chromeos.img' ! -name 'usb_chromeos_win.sh' -exec rm -f {} +
+find . -type f ! -name '"$chromeos_link".img' ! -name 'usb_chromeos_win.sh' -exec rm -f {} +
