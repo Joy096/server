@@ -1,10 +1,17 @@
-
 #!/bin/bash
+
+# Копирование SSH-ключей и настройка прав доступа
+sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
+sudo chown -R root. /root/.ssh/
 
 # Обновление системы
 sudo apt update
 sudo apt upgrade -y
 sudo apt autoremove -y
+
+# Остановка и отключение netfilter-persistent
+sudo systemctl stop netfilter-persistent
+sudo systemctl disable netfilter-persistent
 
 # Настройка брандмауэра 
 sudo ufw default deny incoming
@@ -41,3 +48,6 @@ sudo apt install aptitude -y
 
 # Обновление пакетов с помощью aptitude 
 sudo aptitude upgrade -y
+
+# Перезагрузка сервера
+sudo reboot
