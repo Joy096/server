@@ -10,7 +10,7 @@ function install_outline {
     curl -fsSL https://get.docker.com/ | sh
 
     echo "Установка Outline VPN..."
-    install_output=$(SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(wget -qO- https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh)
+    install_output=$(yes Y | SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(wget -qO- https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh)
 
     # Извлечение строки с API URL
     api_info=$(echo "$install_output" | grep -oP '"apiUrl":"https://[^"]+"')
