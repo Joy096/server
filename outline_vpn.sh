@@ -27,10 +27,16 @@ function install_outline {
         return 1
     fi
 
-    # Вывод информации для пользователя
+    # Переменная для хранения зеленого цвета и сброса цвета
+    GREEN='\033[0;32m'
+    NC='\033[0m' # No Color
+
+    # Вывод информации для пользователя с зелёным цветом для apiUrl
     echo ""
-    echo "Чтобы управлять сервером скопируйте ссылку apiUrl выше для Outline Manager и нажмите Enter."
-    read -p ""
+    echo "Чтобы управлять сервером Outline, скопируйте следующую строку в интерфейс Outline Manager:"
+    echo -e "${GREEN}${api_info}${NC}"
+    read -p "Нажмите Enter для продолжения..."
+
 
     # Настройка брандмауэра для указанных портов
     echo "Открытие портов $management_port (TCP) и $access_key_port (TCP и UDP) в ufw..."
