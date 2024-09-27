@@ -22,11 +22,7 @@ function install_outline {
 
     # Вывод информации для пользователя
     echo ""
-    echo "To manage your Outline server, please copy the following line (including curly brackets) into Step 2 of the Outline Manager interface:"
-    echo ""
-    echo "$api_info"
-    echo ""
-    echo "Когда будете готовы продолжить установку, нажмите Enter."
+    echo "Чтобы управлять сервером скопируй ссылку apiUrl выше для Outline Manager и нажмите Enter."
     read -p ""
 
     # Настройка брандмауэра для указанных портов
