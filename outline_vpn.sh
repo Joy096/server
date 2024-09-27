@@ -35,6 +35,11 @@ function install_outline {
     ufw allow "$access_key_port/tcp"
     ufw allow "$access_key_port/udp"
 
+    # Сохранение портов в файл конфигурации
+    echo "Сохранение портов в файл конфигурации..."
+    echo "$management_port" > /root/outline_ports.conf
+    echo "$access_key_port" >> /root/outline_ports.conf 
+
     # Запрос Custom DNS
     read -p "Введите адрес Custom DNS (например, 94.140.14.14:53): " custom_dns
 
@@ -88,6 +93,16 @@ function uninstall_outline {
     systemctl daemon-reload
     apt autoclean
 
+    # Чтение портов из файла конфигурации, если он существует
+    if [[ -f /root/outline_ports.conf ]]; then
+        echo "Чтение портов из файла конфигурации..."
+        readarray -t ports < /root/outline_ports.conf
+        management_port=${ports[0]}
+        access_key_port=${ports[1]}
+    else
+        echo "Файл конфигурации с портами не найден."
+    fi
+
     # Запрос на удаление клиентских портов
     read -p "Введите порты клиентов (через пробел) для удаления: " -a client_ports
     for port in "${client_ports[@]}"; do
@@ -112,6 +127,9 @@ function uninstall_outline {
     rm -rf /opt/outline
     rm -rf /var/lib/outline
 
+    # Удаление файла конфигурации
+    rm -f /root/outline_ports.conf
+
     echo "Outline и Custom DNS успешно удалены."
 }
 
@@ -131,7 +149,7 @@ function show_api_url {
 function main_menu {
     clear
     echo "=============================="
-    echo "    Outline VPN Installer"
+    echo "      Outline VPN Installer"
     echo "=============================="
     echo "1. Установка Outline VPN на Ubuntu ARM"
     echo "2. Удаление Outline и Custom DNS"
