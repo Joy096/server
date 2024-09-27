@@ -10,19 +10,26 @@ function install_outline {
     curl -fsSL https://get.docker.com/ | sh
 
     echo "Установка Outline VPN..."
-    yes Y | SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(curl -Ls https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh 2>&1 
-    install_output=$?  # Сохраняем код возврата скрипта в переменную
+    # Сохраняем весь вывод установки в переменную install_output
+    install_output=$(yes Y | SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(curl -Ls https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh 2>&1)
 
-    # Извлечение строки с API URL и сертификатом
-    api_info=$(echo "$install_output" | grep -oP '{"apiUrl":"https://.*?","certSha256":"[a-fA-F0-9]{64}"}')
+    # Извлечение строки с API URL
+    api_info=$(echo "$install_output" | grep -oP '"apiUrl":"https://[^"]+"')
 
     # Извлечение портов для управления и ключей доступа
     management_port=$(echo "$install_output" | grep -oP '(?<=Management port )\d+')
     access_key_port=$(echo "$install_output" | grep -oP '(?<=Access key port )\d+')
 
+    # Проверка, что порты успешно извлечены
+    if [[ -z $management_port || -z $access_key_port ]]; then
+        echo "Ошибка при извлечении портов. Проверьте вывод установки:"
+        echo "$install_output"
+        return 1
+    fi
+
     # Вывод информации для пользователя
     echo ""
-    echo "Чтобы управлять сервером скопируй ссылку apiUrl выше для Outline Manager и нажмите Enter."
+    echo "Чтобы управлять сервером скопируйте ссылку apiUrl выше для Outline Manager и нажмите Enter."
     read -p ""
 
     # Настройка брандмауэра для указанных портов
@@ -34,7 +41,7 @@ function install_outline {
     # Сохранение портов в файл конфигурации
     echo "Сохранение портов в файл конфигурации..."
     echo "$management_port" > /root/outline_ports.conf
-    echo "$access_key_port" >> /root/outline_ports.conf 
+    echo "$access_key_port" >> /root/outline_ports.conf
 
     # Запрос Custom DNS
     read -p "Введите адрес Custom DNS (например, 94.140.14.14:53): " custom_dns
