@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 CONFIG_FILE="/root/outline_data.txt"
 
 function install_outline {
+    echo ""
     echo "Установка Docker..."
     curl -fsSL https://get.docker.com/ | sh
 
@@ -46,6 +47,10 @@ function install_outline {
     ufw allow "$management_port/tcp"
     ufw allow "$access_key_port/tcp"
     ufw allow "$access_key_port/udp"
+
+    # Вывод сообщения о завершении установки
+    echo ""
+    echo -e "Установка Outline VPN на Ubuntu завершена!"
 }
 
 function show_api_url {
@@ -128,7 +133,7 @@ function uninstall_outline {
     # Удаление файла конфигурации
     rm -f "$CONFIG_FILE"
 
-    echo "Outline и Custom DNS успешно удалены."
+    echo "Outline VPN и Custom DNS успешно удалены."
 }
 
 function main_menu {
@@ -136,7 +141,7 @@ function main_menu {
     echo "=============================="
     echo "      Outline VPN Installer"
     echo "=============================="
-    echo "1. Установка Outline VPN на Ubuntu ARM"
+    echo "1. Установка Outline VPN на Ubuntu"
     echo "2. Удаление Outline и Custom DNS"
     echo "3. Генерация ссылки-приглашения на подключение"
     echo "4. Отобразить apiUrl"
