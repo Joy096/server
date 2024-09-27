@@ -10,7 +10,7 @@ GREEN='\033[0;32m'
 NC='\033[0m' # No Color
 
 # Путь к файлу для хранения портов и API URL
-CONFIG_FILE="/root/outline_data"
+CONFIG_FILE="/root/outline_data.txt"
 
 function install_outline {
     echo "Установка Docker..."
@@ -52,7 +52,11 @@ function show_api_url {
     # Чтение API URL из файла конфигурации
     if [[ -f $CONFIG_FILE ]]; then
         api_info=$(sed -n '1p' "$CONFIG_FILE")
-        echo -e "API URL для вашего Outline сервера: ${GREEN}${api_info}${NC}"
+        echo ""
+        echo -e "API URL для вашего Outline сервера:"
+        echo ""
+        echo -e "${GREEN}${api_info}${NC}"
+        echo ""
     else
         echo "API URL недоступен. Сначала установите Outline VPN."
     fi
@@ -70,11 +74,11 @@ function generate_invite_link {
 
     # Генерация ссылки-приглашения
     invite_link="https://s3.amazonaws.com/outline-vpn/invite.html#/ru/invite/${invite_key}"
-    echo "Ссылка-приглашение сгенерирована: ${invite_link}"
-
-    # Сохранение ссылки-приглашения в файл
-    echo "Сохранение ссылки-приглашения в файл..."
-    echo "$invite_link" >> "$CONFIG_FILE"
+    echo ""
+    echo "Ссылка-приглашение сгенерирована:"
+    echo ""
+    echo -e "${GREEN}${invite_link}${NC}"
+    echo ""
 }
 
 function uninstall_outline {
