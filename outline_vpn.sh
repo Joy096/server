@@ -36,7 +36,9 @@ function install_outline {
     # Вывод информации для пользователя с зелёным цветом для apiUrl
     echo ""
     echo "Чтобы управлять сервером Outline, скопируйте следующую строку в интерфейс Outline Manager:"
+    echo ""
     echo -e "${GREEN}${api_info}${NC}"
+    echo ""
     read -p "Нажмите Enter для продолжения..."
 
     # Настройка брандмауэра для указанных портов
@@ -54,6 +56,25 @@ function show_api_url {
     else
         echo "API URL недоступен. Сначала установите Outline VPN."
     fi
+}
+
+function generate_invite_link {
+    # Запрос ключа от пользователя
+    read -p "Введите ключ для генерации ссылки-приглашения: " invite_key
+
+    # Проверка, что ключ не пустой
+    if [[ -z "$invite_key" ]]; then
+        echo "Ключ не может быть пустым! Попробуйте снова."
+        return
+    fi
+
+    # Генерация ссылки-приглашения
+    invite_link="https://s3.amazonaws.com/outline-vpn/invite.html#/ru/invite/${invite_key}"
+    echo "Ссылка-приглашение сгенерирована: ${invite_link}"
+
+    # Сохранение ссылки-приглашения в файл
+    echo "Сохранение ссылки-приглашения в файл..."
+    echo "$invite_link" >> "$CONFIG_FILE"
 }
 
 function uninstall_outline {
@@ -113,10 +134,11 @@ function main_menu {
     echo "=============================="
     echo "1. Установка Outline VPN на Ubuntu ARM"
     echo "2. Удаление Outline и Custom DNS"
-    echo "3. Отобразить apiUrl"
-    echo "4. Выход"
+    echo "3. Генерация ссылки-приглашения на подключение"
+    echo "4. Отобразить apiUrl"
+    echo "5. Выход"
     echo "=============================="
-    read -p "Выберите опцию [1-4]: " choice
+    read -p "Выберите опцию [1-5]: " choice
 
     case $choice in
         1)
@@ -126,9 +148,12 @@ function main_menu {
             uninstall_outline
             ;;
         3)
-            show_api_url
+            generate_invite_link
             ;;
         4)
+            show_api_url
+            ;;
+        5)
             exit 0
             ;;
         *)
