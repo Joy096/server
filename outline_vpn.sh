@@ -10,10 +10,10 @@ function install_outline {
     curl -fsSL https://get.docker.com/ | sh
 
     echo "Установка Outline VPN..."
-    install_output=$(yes Y | SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(wget -qO- https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh)
+    install_output=$(yes Y | SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(wget -qO- https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh 2>&1)
 
-    # Извлечение строки с API URL
-    api_info=$(echo "$install_output" | grep -oP '"apiUrl":"https://[^"]+"')
+    # Извлечение строки с API URL и сертификатом
+    api_info=$(echo "$install_output" | grep -oP '{"apiUrl":"https://.*?","certSha256":"[a-fA-F0-9]{64}"}')
 
     # Извлечение портов для управления и ключей доступа
     management_port=$(echo "$install_output" | grep -oP '(?<=Management port )\d+')
@@ -21,7 +21,9 @@ function install_outline {
 
     # Вывод информации для пользователя
     echo ""
-    echo "To manage your Outline server, please copy the following line (including curly brackets) into Step 2 of the Outline Manager interface: $api_info"
+    echo "To manage your Outline server, please copy the following line (including curly brackets) into Step 2 of the Outline Manager interface:"
+    echo ""
+    echo "$api_info"
     echo ""
     echo "Когда будете готовы продолжить установку, нажмите Enter."
     read -p ""
