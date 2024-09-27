@@ -12,8 +12,8 @@ function install_outline {
     echo "Установка Outline VPN..."
     install_output=$(SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(wget -qO- https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh)
 
-    # Извлечение строки с API URL и сертификатом
-    api_info=$(echo "$install_output" | grep -oP '{"apiUrl":"https://.*?","certSha256":"[a-fA-F0-9]{64}"}')
+    # Извлечение строки с API URL
+    api_info=$(echo "$install_output" | grep -oP '"apiUrl":"https://[^"]+"')
 
     # Извлечение портов для управления и ключей доступа
     management_port=$(echo "$install_output" | grep -oP '(?<=Management port )\d+')
