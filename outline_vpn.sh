@@ -1,11 +1,36 @@
 #!/bin/bash
 
+# Переменные для хранения портов и API URL
+declare management_port=""
+declare access_key_port=""
+declare api_info=""
+
 function install_outline {
     echo "Установка Docker..."
     curl -fsSL https://get.docker.com/ | sh
 
     echo "Установка Outline VPN..."
-    SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(wget -qO- https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh
+    install_output=$(SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(wget -qO- https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh)
+
+    # Извлечение строки с API URL и сертификатом
+    api_info=$(echo "$install_output" | grep -oP '{"apiUrl":"https://.*?","certSha256":"[a-fA-F0-9]{64}"}')
+
+    # Извлечение портов для управления и ключей доступа
+    management_port=$(echo "$install_output" | grep -oP '(?<=Management port )\d+')
+    access_key_port=$(echo "$install_output" | grep -oP '(?<=Access key port )\d+')
+
+    # Вывод информации для пользователя
+    echo ""
+    echo "To manage your Outline server, please copy the following line (including curly brackets) into Step 2 of the Outline Manager interface: $api_info"
+    echo ""
+    echo "Когда будете готовы продолжить установку, нажмите Enter."
+    read -p ""
+
+    # Настройка брандмауэра для указанных портов
+    echo "Открытие портов $management_port (TCP) и $access_key_port (TCP и UDP) в ufw..."
+    ufw allow "$management_port/tcp"
+    ufw allow "$access_key_port/tcp"
+    ufw allow "$access_key_port/udp"
 
     # Запрос Custom DNS
     read -p "Введите адрес Custom DNS (например, 94.140.14.14:53): " custom_dns
@@ -66,6 +91,17 @@ function uninstall_outline {
         ufw delete allow "$port"
     done
 
+    # Удаление портов Outline
+    if [[ -n $management_port ]]; then
+        echo "Удаление порта управления $management_port..."
+        ufw delete allow "$management_port/tcp"
+    fi
+    if [[ -n $access_key_port ]]; then
+        echo "Удаление порта доступа $access_key_port..."
+        ufw delete allow "$access_key_port/tcp"
+        ufw delete allow "$access_key_port/udp"
+    fi
+
     echo "Удаление Outline VPN..."
     docker ps -a | grep shadowbox | awk '{print $1}' | xargs docker stop
     docker ps -a | grep shadowbox | awk '{print $1}' | xargs docker rm
@@ -81,6 +117,14 @@ function generate_invite_link {
     echo "Ваша ссылка-приглашение: https://s3.amazonaws.com/outline-vpn/invite.html#/ru/invite/$invite_key"
 }
 
+function show_api_url {
+    if [[ -z $api_info ]]; then
+        echo "API URL недоступен. Сначала установите Outline VPN."
+    else
+        echo "API URL для вашего Outline сервера: $api_info"
+    fi
+}
+
 function main_menu {
     clear
     echo "=============================="
@@ -89,9 +133,10 @@ function main_menu {
     echo "1. Установка Outline VPN на Ubuntu ARM"
     echo "2. Удаление Outline и Custom DNS"
     echo "3. Генерация ссылки - приглашения на подключение"
-    echo "4. Выход"
+    echo "4. Отобразить apiUrl"
+    echo "5. Выход"
     echo "=============================="
-    read -p "Выберите опцию [1-4]: " choice
+    read -p "Выберите опцию [1-5]: " choice
 
     case $choice in
         1)
@@ -104,6 +149,9 @@ function main_menu {
             generate_invite_link
             ;;
         4)
+            show_api_url
+            ;;
+        5)
             exit 0
             ;;
         *)
