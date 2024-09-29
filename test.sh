@@ -14,6 +14,7 @@ sudo systemctl stop netfilter-persistent
 sudo systemctl disable netfilter-persistent
 
 # Настройка брандмауэра 
+sudo apt install ufw -y
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 22/tcp # Разрешить SSH
