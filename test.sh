@@ -29,7 +29,7 @@ sudo sysctl -p
 # Настройка локали 
 sudo locale-gen ru_UA.utf8
 sudo update-locale LANG=ru_UA.UTF8
-sudo dpkg-reconfigure -f noninteractive locales
+sudo dpkg-reconfigure locales
 
 # Настройка часового пояса
 sudo timedatectl set-timezone Europe/Kyiv
