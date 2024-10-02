@@ -64,12 +64,11 @@ sudo chmod +x /root/updater.sh
 # m h  dom mon dow   command"; 
 sudo crontab -u root -l 2>/dev/null; 
 echo "0 4 * * * bash /root/updater.sh > /var/log/updater.log") | sudo crontab -u root -
-
-# Установка aptitude 
+ 
+# Добавляем репозиторий universe и устанавливаем aptitude
+yes | sudo add-apt-repository universe
+sudo apt update
 sudo apt install aptitude -y
 
 # Обновление пакетов с помощью aptitude 
 sudo aptitude upgrade -y
-
-# Перезагрузка сервера
-sudo reboot
