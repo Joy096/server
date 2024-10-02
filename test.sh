@@ -32,7 +32,7 @@ sudo update-locale LANG=ru_UA.UTF8
 sudo dpkg-reconfigure -f noninteractive locales
 
 # Настройка часового пояса
-sudo timedatectl set-timezone Europe/Kiyv
+sudo timedatectl set-timezone Europe/Kyiv
 
 # Скачивание и настройка скрипта updater.sh 
 sudo wget -P /root/ https://raw.githubusercontent.com/Joy096/server/main/updater.sh
