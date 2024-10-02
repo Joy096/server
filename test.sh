@@ -68,22 +68,14 @@ echo "0 4 * * * bash /root/updater.sh > /var/log/updater.log") | sudo crontab -u
  
 # Проверяем наличие пакета aptitude
 if apt-cache show aptitude > /dev/null 2>&1; then
-    echo "aptitude уже доступен в репозитории, начинаем установку..."
+    :
 else
-    echo "aptitude не найден в репозитории. Добавляем репозиторий universe..."
     yes | sudo add-apt-repository universe
     sudo apt update
 fi
 
 # Устанавливаем aptitude
 sudo apt install aptitude -y
-
-# Проверяем, успешно ли установлен aptitude
-if dpkg -l | grep aptitude > /dev/null 2>&1; then
-    echo "aptitude успешно установлен!"
-else
-    echo "Ошибка: aptitude не удалось установить."
-fi
 
 # Обновление пакетов с помощью aptitude 
 sudo aptitude upgrade -y
