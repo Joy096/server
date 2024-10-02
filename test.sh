@@ -26,10 +26,11 @@ sudo ufw --force enable
 echo -e "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr" | sudo tee --append /etc/sysctl.conf
 sudo sysctl -p
 
-# Настройка локали 
-sudo locale-gen ru_UA.utf8
-sudo update-locale LANG=ru_UA.UTF8
-sudo dpkg-reconfigure locales
+# Настройка локали
+sudo locale-gen ru_UA.UTF-8
+sudo update-locale LANG=ru_UA.UTF-8
+echo "locales locales/default_environment_locale select ru_UA.UTF-8" | sudo debconf-set-selections # Устанавливаем выбор по умолчанию для локали
+sudo dpkg-reconfigure -f noninteractive locales # Переконфигурируем локали
 
 # Настройка часового пояса
 sudo timedatectl set-timezone Europe/Kyiv
@@ -86,3 +87,6 @@ fi
 
 # Обновление пакетов с помощью aptitude 
 sudo aptitude upgrade -y
+
+# Перезагрузкв
+sudo reboot
