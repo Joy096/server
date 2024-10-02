@@ -66,16 +66,14 @@ sudo chmod +x /root/updater.sh
 sudo crontab -u root -l 2>/dev/null; 
 echo "0 4 * * * bash /root/updater.sh > /var/log/updater.log") | sudo crontab -u root -
  
-# Проверяем наличие пакета aptitude
+# Установка aptitude
 if apt-cache show aptitude > /dev/null 2>&1; then
     :
 else
     yes | sudo add-apt-repository universe
     sudo apt update
 fi
-
-# Устанавливаем aptitude
-sudo apt install aptitude -y
+    sudo apt install aptitude -y
 
 # Обновление пакетов с помощью aptitude 
 sudo aptitude upgrade -y
