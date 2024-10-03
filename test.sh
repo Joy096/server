@@ -4,7 +4,8 @@
 sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
 sudo chown -R root: /root/.ssh/
 
-# Обновление системы
+# Обновление системы без подтверждений
+export DEBIAN_FRONTEND=noninteractive
 sudo apt update
 sudo apt upgrade -y
 sudo apt autoremove -y
