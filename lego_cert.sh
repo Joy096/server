@@ -26,8 +26,8 @@ CLOUDFLARE_DNS_API_TOKEN="$CLOUDFLARE_DNS_API_TOKEN" \\
 ./lego.sh
 
 # Перемещение сертификатов
-mv "\$DOMAIN_NAME.crt" "$CERT_DIR/" && echo "✅ Сертификат перемещен!"
-mv "\$DOMAIN_NAME.key" "$CERT_DIR/" && echo "✅ Ключ перемещен!"
+mv "/opt/lego/$DOMAIN_NAME.crt" "/var/snap/adguard-home/common/certs" && echo "✅ Сертификат перемещен!"
+mv "/opt/lego/$DOMAIN_NAME.key" "/var/snap/adguard-home/common/certs" && echo "✅ Ключ перемещен!"
 
 # Перезапуск AdGuard Home
 systemctl restart snap.adguard-home.adguard-home.service
