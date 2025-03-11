@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
 LEGO_DIR="/opt/lego"
 CERT_DIR="/var/snap/adguard-home/common/certs"
 LEGO_SCRIPT="$LEGO_DIR/lego_renew.sh"
