@@ -11,6 +11,9 @@ install_lego() {
     mkdir -p "$LEGO_DIR" && cd "$LEGO_DIR" || exit
     curl -s https://raw.githubusercontent.com/ameshkov/legoagh/master/lego.sh --output lego.sh
     chmod +x lego.sh
+    
+    echo "🔹 Создаем папку для сертификатов..."
+    mkdir -p "$CERT_DIR"
 
     read -p "Введите DOMAIN NAME: " DOMAIN_NAME
     read -p "Введите EMAIL: " EMAIL
