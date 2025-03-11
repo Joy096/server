@@ -44,15 +44,20 @@ EOF
     # Запускаем скрипт обновления
     bash "$LEGO_SCRIPT"
 
-    echo "✅ Установка завершена! Сертификаты находятся в:"
-    echo "$CERT_DIR/$DOMAIN_NAME.crt"
-    echo "$CERT_DIR/$DOMAIN_NAME.key"
+    # Проверяем наличие сертификатов перед выводом информации
+    if [[ -f "$CERT_DIR/$DOMAIN_NAME.crt" && -f "$CERT_DIR/$DOMAIN_NAME.key" ]]; then
+        echo "✅ Установка завершена! Сертификаты находятся в:"
+        echo "$CERT_DIR/$DOMAIN_NAME.crt"
+        echo "$CERT_DIR/$DOMAIN_NAME.key"
+    else
+        echo "❌ Ошибка: сертификаты не найдены в $CERT_DIR!"
+    fi
 }
 
 remove_lego() {
     echo "🔹 Удаляем LEGO..."
     rm -rf "$LEGO_DIR"
-    rm -ff "$CERT_DIR"
+    rm -rf "$CERT_DIR"
     crontab -l 2>/dev/null | grep -v "$CRON_CMD" | crontab -
     echo "✅ LEGO и сертификаты удалены!"
 }
