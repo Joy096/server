@@ -85,4 +85,4 @@ case "$ACTION" in
 esac
 
 # Самоудаление скрипта
-rm -- "$0"
+trap 'rm -- "$0"' EXIT
