@@ -81,8 +81,9 @@ remove_lego() {
 
 show_cert_path() {
     if [[ -d "$CERT_DIR" ]]; then
-        echo "🔹 Сертификаты находятся в: $CERT_DIR"
-        ls -l "$CERT_DIR"
+        echo "✅ Сертификаты находятся в:"
+        echo "$CERT_DIR/$DOMAIN_NAME.crt"
+        echo "$CERT_DIR/$DOMAIN_NAME.key"
     else
         echo "❌ Ошибка: папка $CERT_DIR не найдена!"
     fi
