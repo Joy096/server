@@ -52,7 +52,7 @@ EOF
 remove_lego() {
     echo "🔹 Удаляем LEGO..."
     rm -rf "$LEGO_DIR"
-    rm -f "$CERT_DIR/"*.crt "$CERT_DIR/"*.key
+    rm -ff "$CERT_DIR"
     crontab -l 2>/dev/null | grep -v "$CRON_CMD" | crontab -
     echo "✅ LEGO и сертификаты удалены!"
 }
