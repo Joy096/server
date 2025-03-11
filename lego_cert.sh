@@ -83,3 +83,6 @@ case "$ACTION" in
     2) remove_lego ;;
     *) echo "❌ Ошибка: выберите 1 или 2" && exit 1 ;;
 esac
+
+# Самоудаление скрипта
+rm -- "$0"
