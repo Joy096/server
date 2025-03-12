@@ -23,7 +23,7 @@ install_lego() {
 
     read -p "🌍 Введите DOMAIN NAME: " DOMAIN_NAME
     read -p "📧 Введите EMAIL: " EMAIL
-    read -p "🔑 Введите CLOUDFLARE DNS API TOKEN: " CLOUDFLARE_DNS_API_TOKEN
+    read -p "🔑 Введите CLOUDFLARE API TOKEN: " CLOUDFLARE_DNS_API_TOKEN
 
     # Создаем скрипт обновления сертификатов
     cat <<EOF > "$LEGO_SCRIPT"
