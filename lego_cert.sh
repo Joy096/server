@@ -80,10 +80,13 @@ remove_lego() {
 }
 
 show_cert_path() {
-    if [[ -f "$CERT_DIR/*.crt" && -f "$CERT_DIR/*.key" ]]; then
+    crt_file=$(ls "$CERT_DIR"/*.crt 2>/dev/null)
+    key_file=$(ls "$CERT_DIR"/*.key 2>/dev/null)
+
+    if [[ -n "$crt_file" && -n "$key_file" ]]; then
         echo "✅ Сертификаты находятся в:"
-        echo "$CERT_DIR/*.crt"
-        echo "$CERT_DIR/*.key"
+        echo "$crt_file"
+        echo "$key_file"
     else
         echo "❌ Ошибка: сертификаты не найдены!"
     fi
