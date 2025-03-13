@@ -109,11 +109,11 @@ install_cert_xui() {
         return
     fi
 
-    LOGI "Настраиваем сертификаты для X-UI 🔧..."
+    LOGI "Устанавливаем сертификат в 3X-UI 🔧..."
     /usr/local/x-ui/x-ui cert -webCert "${CERT_DIR}/fullchain.pem" -webCertKey "${CERT_DIR}/private.key"
 
     systemctl restart x-ui
-    LOGI "Сертификаты установлены в X-UI и панель перезапущена!"
+    LOGI "Сертификат установлен в 3X-UI и панель перезапущена!"
 }
 
 install_cert_nextcloud() {
@@ -136,7 +136,8 @@ install_cert_nextcloud() {
     cd "${NEXTCLOUD_CERT_DIR}" || { LOGE "Ошибка: не удалось перейти в ${NEXTCLOUD_CERT_DIR}"; return; }
     nextcloud.enable-https custom ./cert.pem ./private.key ./fullchain.pem
 
-    LOGI "Сертификаты установлены в Nextcloud! ✅"
+    snap restart nextcloud
+    LOGI "Сертификат установлен в Nextcloud и панель перезапущена! ✅"
 }
 
 # Главное меню
