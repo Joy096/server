@@ -66,11 +66,9 @@ ssl_cert_issue_CF() {
     # Вывод информации о файлах
     echo -e "\n🎉 ${green}Сертификаты успешно выпущены и сохранены в папку: ${CERT_DIR}${plain}"
     echo "📂 Список файлов сертификатов:"
-    ls -1 "${CERT_DIR}" | while read file; do
+    find "${CERT_DIR}" -type f | while read file; do
         echo -e "   📄 ${file}"
     done
-
-    echo -e "🔄 Автообновление включено 🔥"
 }
 
 remove_acme() {
