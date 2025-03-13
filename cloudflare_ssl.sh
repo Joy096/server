@@ -188,9 +188,10 @@ install_cert_adguard() {
         --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem"
 
     LOGI "Обновляем конфигурацию AdGuard Home 🔧..."
-    sed -i 's|certificate_path:.*|certificate_path: "/var/snap/adguard-home/common/certs/fullchain.pem"|' /var/snap/adguard-home/current/AdGuardHome.yaml
-    sed -i 's|private_key_path:.*|private_key_path: "/var/snap/adguard-home/common/certs/private.key"|' /var/snap/adguard-home/current/AdGuardHome.yaml
-    sed -i 's|enabled: false|enabled: true|' /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i "/^tls:/,/^[^ ]/ { s|enabled: false|enabled: true|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i "/^tls:/,/^[^ ]/ { s|server_name:.*|server_name: ${CF_Domain}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i "/^tls:/,/^[^ ]/ { s|certificate_path:.*|certificate_path: \"/var/snap/adguard-home/common/certs/fullchain.pem\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i "/^tls:/,/^[^ ]/ { s|private_key_path:.*|private_key_path: \"/var/snap/adguard-home/common/certs/private.key\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
 
     LOGI "Перезапускаем AdGuard Home 🔄..."
     snap restart adguard-home
