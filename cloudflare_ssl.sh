@@ -54,15 +54,15 @@ ssl_cert_issue_CF() {
     CERT_DIR="/root/my cert/${CF_Domain}"
     mkdir -p "${CERT_DIR}"
 
-    LOGI "Копируем сертификаты в ${CERT_DIR} 📂..."
+    LOGI "Копируем файлы сертификата в ${CERT_DIR} 📂..."
     ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
         --cert-file "${CERT_DIR}/cert.pem" \
         --key-file "${CERT_DIR}/private.key" \
         --fullchain-file "${CERT_DIR}/fullchain.pem" \
         --ca-file "${CERT_DIR}/ca.pem"
 
-    echo -e "\n🎉 ${green}Сертификаты успешно выпущены и сохранены в папку: ${CERT_DIR}${plain}"
-    echo "📂 Список файлов сертификатов:"
+    echo -e "\n🎉 ${green}Файлы сертификата успешно созданы и сохранены в папку: ${CERT_DIR}${plain}"
+    echo "📂 Список файлов сертификата:"
     find "${CERT_DIR}" -type f | while read file; do
         echo -e "   📄 ${file}"
     done
@@ -94,7 +94,7 @@ show_cert_path() {
         return
     fi
 
-    echo -e "📂 Доступные сертификаты:"
+    echo -e "📂 Доступные файлы сертификата:"
     find "/root/my cert" -type f | while read file; do
         echo -e "   📄 ${file}"
     done
@@ -105,7 +105,7 @@ install_cert_xui() {
     CERT_DIR="/root/my cert/${CF_Domain}"
 
     if [[ ! -f "${CERT_DIR}/fullchain.pem" || ! -f "${CERT_DIR}/private.key" ]]; then
-        LOGE "Сертификаты не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
+        LOGE "Сертификат и ключ не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
         return
     fi
 
@@ -113,7 +113,7 @@ install_cert_xui() {
     /usr/local/x-ui/x-ui cert -webCert "${CERT_DIR}/fullchain.pem" -webCertKey "${CERT_DIR}/private.key"
 
     systemctl restart x-ui
-    LOGI "Сертификат установлен в 3X-UI и панель перезапущена!"
+    LOGI "Сертификат и ключ установлены в 3X-UI и панель перезапущена!"
 }
 
 install_cert_nextcloud() {
