@@ -32,9 +32,9 @@ ssl_cert_issue_CF() {
     read -p "🌍 Введите домен: " CF_Domain
     echo -e "🔑 Введите Cloudflare Global API Key: "
     echo -e "   Его можно найти по ссылке: \e[33mhttps://dash.cloudflare.com/profile/api-tokens\e[0m"
-    echo -ne "\033[2A\033[38C"  # Поднимаем курсор на строку выше и смещаем на 2 пробела
+    echo -ne "\033[2A\033[38C"  
     read -r CF_GlobalKey
-    echo ""    # Добавляем пустую строку, чтобы email не наложился
+    echo ""    
     read -p "📧 Введите email: " CF_AccountEmail
 
     export CF_Key="${CF_GlobalKey}"
@@ -51,19 +51,16 @@ ssl_cert_issue_CF() {
         LOGE "Ошибка настройки автообновления ❌"; exit 1;
     }
 
-    # Создаём папку для сертификатов
     CERT_DIR="/root/my cert/${CF_Domain}"
     mkdir -p "${CERT_DIR}"
 
-    # Устанавливаем сертификаты в нужные файлы
-    LOGI "Сохраняем сертификаты в ${CERT_DIR} 📂..."
+    LOGI "Копируем сертификаты в ${CERT_DIR} 📂..."
     ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
         --cert-file "${CERT_DIR}/cert.pem" \
         --key-file "${CERT_DIR}/private.key" \
         --fullchain-file "${CERT_DIR}/fullchain.pem" \
         --ca-file "${CERT_DIR}/ca.pem"
 
-    # Вывод информации о файлах
     echo -e "\n🎉 ${green}Сертификаты успешно выпущены и сохранены в папку: ${CERT_DIR}${plain}"
     echo "📂 Список файлов сертификатов:"
     find "${CERT_DIR}" -type f | while read file; do
@@ -74,7 +71,6 @@ ssl_cert_issue_CF() {
 remove_acme() {
     LOGI "Начинаем удаление acme.sh, сертификатов и папки my cert/ 🗑️..."
 
-    # Удаляем каталог acme.sh
     if [ -d "$HOME/.acme.sh" ]; then
         rm -rf "$HOME/.acme.sh"
         LOGI "Удалён каталог: $HOME/.acme.sh ✅"
@@ -82,7 +78,6 @@ remove_acme() {
         LOGI "acme.sh не найден, ничего удалять не нужно 🟢"
     fi
 
-    # Удаляем папку my cert/, если она есть
     if [ -d "/root/my cert" ]; then
         rm -rf "/root/my cert"
         LOGI "Удалена папка: /root/my cert ✅"
@@ -121,6 +116,29 @@ install_cert_xui() {
     LOGI "Сертификаты установлены в X-UI и панель перезапущена!"
 }
 
+install_cert_nextcloud() {
+    read -p "🌍 Введите домен, для которого установить сертификат в Nextcloud: " CF_Domain
+    CERT_DIR="/root/my cert/${CF_Domain}"
+    NEXTCLOUD_CERT_DIR="/var/snap/nextcloud/current/certs/custom/"
+
+    if [[ ! -f "${CERT_DIR}/cert.pem" || ! -f "${CERT_DIR}/private.key" || ! -f "${CERT_DIR}/fullchain.pem" ]]; then
+        LOGE "Сертификаты не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
+        return
+    fi
+
+    LOGI "Копируем сертификаты в Nextcloud 📂..."
+    ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
+        --cert-file "${NEXTCLOUD_CERT_DIR}/cert.pem" \
+        --key-file "${NEXTCLOUD_CERT_DIR}/private.key" \
+        --fullchain-file "${NEXTCLOUD_CERT_DIR}/fullchain.pem"
+
+    LOGI "Активируем кастомный сертификат в Nextcloud 🔧..."
+    cd "${NEXTCLOUD_CERT_DIR}" || { LOGE "Ошибка: не удалось перейти в ${NEXTCLOUD_CERT_DIR}"; return; }
+    nextcloud.enable-https custom ./cert.pem ./private.key ./fullchain.pem
+
+    LOGI "Сертификаты установлены в Nextcloud! ✅"
+}
+
 # Главное меню
 echo "================================"
 echo "🛡️  Cloudflare SSL Certificate 🔑"
@@ -129,15 +147,17 @@ echo -e "1️⃣  Установить acme и выпустить сертифи
 echo -e "2️⃣  Удалить acme.sh, сертификаты и папку my cert 🗑️"
 echo -e "3️⃣  Показать путь к файлам сертификата 📄"
 echo -e "4️⃣  Установить сертификат в 3X-UI 🔧"
+echo -e "5️⃣  Установить сертификат в Nextcloud 🔧"
 echo -e "0️⃣  Выйти ❌"
 echo "================================"
-read -p "📌 Введите номер действия (0-4): " choice
+read -p "📌 Введите номер действия (0-5): " choice
 
 case "$choice" in
     1) ssl_cert_issue_CF ;;
     2) remove_acme ;;
     3) show_cert_path ;;
     4) install_cert_xui ;;
+    5) install_cert_nextcloud ;;
     0) echo -e "👋 ${green}Выход...${plain}"; exit 0 ;;
-    *) echo -e "⚠️ ${red}Неверный ввод! Пожалуйста, выберите 0-3.${plain}" ;;
+    *) echo -e "⚠️ ${red}Неверный ввод! Пожалуйста, выберите 0-5.${plain}" ;;
 esac
