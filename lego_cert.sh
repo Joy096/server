@@ -23,7 +23,11 @@ install_lego() {
 
     read -p "🌍 Введите DOMAIN NAME: " DOMAIN_NAME
     read -p "📧 Введите EMAIL: " EMAIL
-    read -p "🔑 Введите CLOUDFLARE API TOKEN: " CLOUDFLARE_DNS_API_TOKEN
+    echo -e "🔑 Введите CLOUDFLARE API TOKEN: "
+    echo -e "   Его можно найти по ссылке: \e[33mhttps://dash.cloudflare.com/profile/api-tokens\e[0m"
+    echo -ne "\033[2A\033[41C"  # Поднимаем курсор на строку выше и смещаем вправо
+    read -r CLOUDFLARE_DNS_API_TOKEN
+
 
     # Создаем скрипт обновления сертификатов
     cat <<EOF > "$LEGO_SCRIPT"
