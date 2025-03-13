@@ -136,7 +136,9 @@ install_cert_nextcloud() {
     cd "${NEXTCLOUD_CERT_DIR}" || { LOGE "Ошибка: не удалось перейти в ${NEXTCLOUD_CERT_DIR}"; return; }
     nextcloud.enable-https custom ./cert.pem ./private.key ./fullchain.pem
 
+    LOGI "Перезапускаем Nextcloud 🔧..."
     snap restart nextcloud
+    
     LOGI "Сертификат установлен в Nextcloud и панель перезапущена! ✅"
 }
 
