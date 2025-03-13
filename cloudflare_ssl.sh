@@ -17,13 +17,43 @@ LOGE() { echo -e "❌ ${red}$* ${plain}"; }
 LOGD() { echo -e "⚡ ${yellow}$* ${plain}"; }
 
 install_acme() {
+    # Проверяем наличие curl
+    if ! command -v curl &>/dev/null; then
+        LOGD "curl не найден. Устанавливаем curl ..."
+        if [[ "$(command -v apt-get)" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y curl
+        elif [[ "$(command -v yum)" ]]; then
+            sudo yum install -y curl
+        elif [[ "$(command -v dnf)" ]]; then
+            sudo dnf install -y curl
+        elif [[ "$(command -v pacman)" ]]; then
+            sudo pacman -S --noconfirm curl
+        else
+            LOGE "Не удалось установить curl: не найден менеджер пакетов ❌"
+            return 1
+        fi
+        if [[ $? -ne 0 ]]; then
+            LOGE "Ошибка установки curl ❌"
+            return 1
+        fi
+        LOGI "curl успешно установлен ✅"
+    fi
+
+    # Проверяем наличие acme.sh
     if command -v ~/.acme.sh/acme.sh &>/dev/null; then
         LOGI "acme.sh уже установлен 🚀"
         return 0
     fi
+
     LOGI "Устанавливаем acme.sh 📥..."
     curl -s https://get.acme.sh | sh
-    return $?
+    if [[ $? -ne 0 ]]; then
+        LOGE "Ошибка установки acme.sh ❌"
+        return 1
+    fi
+    LOGI "acme.sh успешно установлен ✅"
+    return 0
 }
 
 ssl_cert_issue_CF() {
