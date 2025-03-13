@@ -58,7 +58,7 @@ install_acme() {
 
 ssl_cert_issue_CF() {
     install_acme || { LOGE "Не удалось установить acme.sh ❌"; exit 1; }
-
+    echo ""
     read -p "🌍 Введите домен: " CF_Domain
     echo -e "🔑 Введите Cloudflare Global API Key: "
     echo -e "   Его можно найти по ссылке: \e[33mhttps://dash.cloudflare.com/profile/api-tokens\e[0m"
