@@ -142,6 +142,33 @@ install_cert_nextcloud() {
     LOGI "Сертификат установлен в Nextcloud и панель перезапущена! ✅"
 }
 
+install_cert_adguard() {
+    read -p "🌍 Введите домен, для которого установить сертификат в AdGuard Home: " CF_Domain
+    CERT_DIR="/root/my_cert/${CF_Domain}"
+    ADGUARD_CERT_DIR="/var/snap/adguard-home/common/certs/"
+
+    if [[ ! -f "${CERT_DIR}/fullchain.pem" || ! -f "${CERT_DIR}/private.key" ]]; then
+        LOGE "Сертификаты не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
+        return
+    fi
+
+    LOGI "Копируем сертификат в AdGuard Home 📂..."
+    ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
+        --key-file "${ADGUARD_CERT_DIR}/private.key" \
+        --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem"
+
+    LOGI "Обновляем конфигурацию AdGuard Home 🔧..."
+    sed -i 's|certificate_path:.*|certificate_path: "/var/snap/adguard-home/common/certs/fullchain.pem"|' /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i 's|private_key_path:.*|private_key_path: "/var/snap/adguard-home/common/certs/private.key"|' /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i 's|enabled: false|enabled: true|' /var/snap/adguard-home/current/AdGuardHome.yaml
+
+    LOGI "Перезапускаем AdGuard Home 🔄..."
+    snap restart adguard-home
+
+    LOGI "Сертификат установлен в AdGuard Home и шифрование включено! ✅"
+}
+
+
 # Главное меню
 echo "================================"
 echo "🛡️  Cloudflare SSL Certificate 🔑"
@@ -151,6 +178,7 @@ echo -e "2️⃣  Удалить acme.sh, сертификаты и папку m
 echo -e "3️⃣  Показать путь к файлам сертификата 📄"
 echo -e "4️⃣  Установить сертификат в 3X-UI 🔧"
 echo -e "5️⃣  Установить сертификат в Nextcloud 🔧"
+echo -e "6️⃣  Установить сертификат в AdGuard Home 🔧"
 echo -e "0️⃣  Выйти ❌"
 echo "================================"
 read -p "📌 Введите номер действия (0-5): " choice
@@ -161,6 +189,7 @@ case "$choice" in
     3) show_cert_path ;;
     4) install_cert_xui ;;
     5) install_cert_nextcloud ;;
+    6) install_cert_adguard ;;
     0) echo -e "👋 ${green}Выход...${plain}"; exit 0 ;;
     *) echo -e "⚠️ ${red}Неверный ввод! Пожалуйста, выберите 0-5.${plain}" ;;
 esac
