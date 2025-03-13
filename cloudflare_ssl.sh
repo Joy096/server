@@ -1,10 +1,6 @@
 #!/bin/bash
 
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
 
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
 
 # Цвета для сообщений
 green='\033[0;32m'
@@ -30,8 +26,12 @@ ssl_cert_issue_CF() {
     install_acme || { LOGE "Не удалось установить acme.sh ❌"; exit 1; }
 
     read -p "🌍 Введите домен: " CF_Domain
-    read -p "🔑 Введите Cloudflare Global API Key: " CF_GlobalKey
-    read -p "📧 Введите email Cloudflare: " CF_AccountEmail
+    echo -e "🔑 Введите Cloudflare Global API Key: "
+    echo -e "   Его можно найти по ссылке: \e[33mhttps://dash.cloudflare.com/profile/api-tokens\e[0m"
+    echo -ne "\033[2A\033[38C"  # Поднимаем курсор на строку выше и смещаем на 2 пробела
+    read -r CF_GlobalKey
+    echo ""    # Добавляем пустую строку, чтобы email не наложился
+    read -p "📧 Введите email: " CF_AccountEmail
 
     export CF_Key="${CF_GlobalKey}"
     export CF_Email="${CF_AccountEmail}"
@@ -43,7 +43,7 @@ ssl_cert_issue_CF() {
     }
 
     LOGI "Настраиваем автообновление 🔄..."
-    ~/.acme.sh/acme.sh --auto-upgrade || {
+    ~/.acme.sh/acme.sh --upgrade --auto-upgrade || {
         LOGE "Ошибка настройки автообновления ❌"; exit 1;
     }
 
