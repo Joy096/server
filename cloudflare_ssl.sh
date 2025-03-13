@@ -51,7 +51,7 @@ ssl_cert_issue_CF() {
         LOGE "Ошибка настройки автообновления ❌"; exit 1;
     }
 
-    CERT_DIR="/root/my cert/${CF_Domain}"
+    CERT_DIR="/root/my_cert/${CF_Domain}"
     mkdir -p "${CERT_DIR}"
 
     LOGI "Копируем файлы сертификата в ${CERT_DIR} 📂..."
@@ -78,31 +78,31 @@ remove_acme() {
         LOGI "acme.sh не найден, ничего удалять не нужно 🟢"
     fi
 
-    if [ -d "/root/my cert" ]; then
-        rm -rf "/root/my cert"
-        LOGI "Удалена папка: /root/my cert ✅"
+    if [ -d "/root/my_cert" ]; then
+        rm -rf "/root/my_cert"
+        LOGI "Удалена папка: /root/my_cert ✅"
     else
-        LOGI "Папка /root/my cert не найдена, пропускаем 🟢"
+        LOGI "Папка /root/my_cert не найдена, пропускаем 🟢"
     fi
 
     LOGI "Удаление завершено ✅"
 }
 
 show_cert_path() {
-    if [[ ! -d "/root/my cert" ]]; then
-        echo -e "❌ Ошибка: папка /root/my cert/ не найдена!"
+    if [[ ! -d "/root/my_cert" ]]; then
+        echo -e "❌ Ошибка: папка /root/my_cert/ не найдена!"
         return
     fi
 
     echo -e "📂 Доступные файлы сертификата:"
-    find "/root/my cert" -type f | while read file; do
+    find "/root/my_cert" -type f | while read file; do
         echo -e "   📄 ${file}"
     done
 }
 
 install_cert_xui() {
     read -p "🌍 Введите домен, для которого установить сертификат в X-UI: " CF_Domain
-    CERT_DIR="/root/my cert/${CF_Domain}"
+    CERT_DIR="/root/my_cert/${CF_Domain}"
 
     if [[ ! -f "${CERT_DIR}/fullchain.pem" || ! -f "${CERT_DIR}/private.key" ]]; then
         LOGE "Сертификат и ключ не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
@@ -113,12 +113,12 @@ install_cert_xui() {
     /usr/local/x-ui/x-ui cert -webCert "${CERT_DIR}/fullchain.pem" -webCertKey "${CERT_DIR}/private.key"
 
     systemctl restart x-ui
-    LOGI "Сертификат и ключ установлены в 3X-UI и панель перезапущена!"
+    LOGI "Сертификат установлен в 3X-UI и панель перезапущена!"
 }
 
 install_cert_nextcloud() {
     read -p "🌍 Введите домен, для которого установить сертификат в Nextcloud: " CF_Domain
-    CERT_DIR="/root/my cert/${CF_Domain}"
+    CERT_DIR="/root/my_cert/${CF_Domain}"
     NEXTCLOUD_CERT_DIR="/var/snap/nextcloud/current/certs/custom/"
 
     if [[ ! -f "${CERT_DIR}/cert.pem" || ! -f "${CERT_DIR}/private.key" || ! -f "${CERT_DIR}/fullchain.pem" ]]; then
