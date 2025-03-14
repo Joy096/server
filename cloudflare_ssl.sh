@@ -186,7 +186,7 @@ install_cert_nextcloud() {
 }
 
 install_cert_adguard() {
-    read -p "🌍 Введите домен, для которого установить сертификат в AdGuard Home: " CF_Domain
+    read -p "🌍 Введите домен, для которого установить сертификат в AdGuardHome: " CF_Domain
     CERT_DIR="/root/my_cert/${CF_Domain}"
     ADGUARD_CERT_DIR="/var/snap/adguard-home/common/certs/"
 
@@ -218,15 +218,28 @@ install_cert_adguard() {
     sed -i "/^tls:/,/^[^ ]/ { s|certificate_path:.*|certificate_path: \"/var/snap/adguard-home/common/certs/fullchain.pem\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
     sed -i "/^tls:/,/^[^ ]/ { s|private_key_path:.*|private_key_path: \"/var/snap/adguard-home/common/certs/private.key\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
 
-    LOGI "Проверка занятости порта 443🚦..."
+   LOGI "Проверка доступности порта 443 ..."
     if netstat -tuln | grep -q ":443 "; then
-        read -p "Стандартный порт 443 занят. Введите другой порт https для веб-интерфейса AdGuard: " HTTPS_PORT
-        if [[ -n "$HTTPS_PORT" ]]; then
-            sed -i "/^tls:/,/^[^ ]/ { s|port_https:.*|port_https: ${HTTPS_PORT}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
-            LOGI "Теперь для веб-интерфейса AdGuard используется порт ${HTTPS_PORT} ."
-        else
-            LOGE "Порт не был введен. Используется стандартный порт 443."
-        fi
+        while true; do
+            read -p "Стандартный порт 443 занят. Введите другой порт https для веб-интерфейса AdGuard: " HTTPS_PORT
+            if [[ -n "$HTTPS_PORT" ]]; then
+                # Проверяем занятость введенного порта
+                if netstat -tuln | grep -q ":${HTTPS_PORT} "; then
+                    LOGE "Порт ${HTTPS_PORT} уже занят. Пожалуйста, выберите другой порт. ❌"
+                else
+                    sed -i "/^tls:/,/^[^ ]/ { s|port_https:.*|port_https: ${HTTPS_PORT}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+                    LOGI "Теперь для веб-интерфейса AdGuard используется порт ${HTTPS_PORT} ."
+                    # Открываем порт в брандмауэре
+                    sudo ufw allow "${HTTPS_PORT}"
+                    LOGI "Порт ${HTTPS_PORT} открыт в брандмауэре."
+                    break
+                fi
+            else
+                continue # Повторяем запрос, если пользователь ничего не ввел
+            fi
+        done
+    else
+        LOGI "Порт 443 свободен и будет использоваться для веб-интерфейса AdGuard Home."
     fi
 
     LOGI "Перезапускаем AdGuard Home 🔄..."
