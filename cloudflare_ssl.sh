@@ -99,7 +99,12 @@ ssl_cert_issue_CF() {
 }
 
 remove_acme() {
-    LOGI "Начинаем удаление acme.sh, сертификатов и папки my cert/ 🗑️..."
+    LOGI "Начинаем удаление acme.sh..."
+
+    if [ -f "$HOME/.acme.sh/acme.sh" ]; then
+    LOGI "Удаляем задачу crontab для acme.sh... 🔄"
+    $HOME/.acme.sh/acme.sh --uninstall
+    fi
 
     if [ -d "$HOME/.acme.sh" ]; then
         rm -rf "$HOME/.acme.sh"
