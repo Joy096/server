@@ -101,17 +101,18 @@ ssl_cert_issue_CF() {
 remove_acme() {
     LOGI "Начинаем удаление acme.sh..."
 
-    if [ -f "$HOME/.acme.sh/acme.sh" ]; then
-    LOGI "Удаляем задачу crontab для acme.sh... 🔄"
-    $HOME/.acme.sh/acme.sh --uninstall
-    fi
-
     if [ -d "$HOME/.acme.sh" ]; then
-        rm -rf "$HOME/.acme.sh"
-        LOGI "Удалён каталог: $HOME/.acme.sh ✅"
+        # Удаляем acme.sh с помощью команды --uninstall
+        ~/.acme.sh/acme.sh --uninstall
+        if [[ $? -eq 0 ]]; then
+            LOGI "acme.sh и задача cron успешно удалены ✅"
+        else
+            LOGE "Ошибка удаления acme.sh ❌"
+        fi
     else
         LOGI "acme.sh не найден, ничего удалять не нужно 🟢"
     fi
+
 
     if [ -d "/root/my_cert" ]; then
         rm -rf "/root/my_cert"
