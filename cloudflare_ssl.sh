@@ -193,6 +193,17 @@ install_cert_adguard() {
     sed -i "/^tls:/,/^[^ ]/ { s|certificate_path:.*|certificate_path: \"/var/snap/adguard-home/common/certs/fullchain.pem\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
     sed -i "/^tls:/,/^[^ ]/ { s|private_key_path:.*|private_key_path: \"/var/snap/adguard-home/common/certs/private.key\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
 
+    LOGI "Проверка занятости порта 443🚦..."
+    if netstat -tuln | grep -q ":443 "; then
+        read -p "Стандартный порт 443 занят. Введите другой порт https для веб-интерфейса AdGuard: " HTTPS_PORT
+        if [[ -n "$HTTPS_PORT" ]]; then
+            sed -i "/^tls:/,/^[^ ]/ { s|port_https:.*|port_https: ${HTTPS_PORT}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+            LOGI "Теперь для веб-интерфейса AdGuard используется порт ${HTTPS_PORT} ."
+        else
+            LOGE "Порт не был введен. Используется стандартный порт 443."
+        fi
+    fi
+
     LOGI "Перезапускаем AdGuard Home 🔄..."
     snap restart adguard-home
 
