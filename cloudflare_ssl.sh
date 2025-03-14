@@ -177,6 +177,18 @@ install_cert_adguard() {
     CERT_DIR="/root/my_cert/${CF_Domain}"
     ADGUARD_CERT_DIR="/var/snap/adguard-home/common/certs/"
 
+    LOGI " Создаем папку, если ее нет 📂..."
+    if [[ ! -d "${ADGUARD_CERT_DIR}" ]]; then
+        LOGI "Создаем директорию ${ADGUARD_CERT_DIR} ..."
+        sudo mkdir -p "${ADGUARD_CERT_DIR}"
+        if [[ $? -ne 0 ]]; then
+            LOGE "Ошибка создания директории ${ADGUARD_CERT_DIR} ❌"
+            return 1
+        fi
+    else
+        LOGI "Директория ${ADGUARD_CERT_DIR} уже существует 🟢"
+    fi
+    
     if [[ ! -f "${CERT_DIR}/fullchain.pem" || ! -f "${CERT_DIR}/private.key" ]]; then
         LOGE "Сертификаты не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
         return
