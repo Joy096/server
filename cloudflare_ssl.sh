@@ -190,9 +190,9 @@ install_cert_adguard() {
     CERT_DIR="/root/my_cert/${CF_Domain}"
     ADGUARD_CERT_DIR="/var/snap/adguard-home/common/certs/"
 
-    LOGI " Создаем папку, если ее нет 📂..."
+    LOGI "Создаем папку, если её нет... 📂"
     if [[ ! -d "${ADGUARD_CERT_DIR}" ]]; then
-        LOGI "Создаем директорию ${ADGUARD_CERT_DIR} ..."
+        LOGI "Создаем директорию ${ADGUARD_CERT_DIR}... 🛠️"
         sudo mkdir -p "${ADGUARD_CERT_DIR}"
         if [[ $? -ne 0 ]]; then
             LOGE "Ошибка создания директории ${ADGUARD_CERT_DIR} ❌"
@@ -207,31 +207,31 @@ install_cert_adguard() {
         return
     fi
 
-    LOGI "Копируем сертификат в AdGuard Home 📂..."
+    LOGI "Копируем сертификат в AdGuard Home... 📥"
     ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
         --key-file "${ADGUARD_CERT_DIR}/private.key" \
         --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem"
 
-    LOGI "Обновляем конфигурацию AdGuard Home 🔧..."
+    LOGI "Обновляем конфигурацию AdGuard Home... 🔧"
     sed -i "/^tls:/,/^[^ ]/ { s|enabled: false|enabled: true|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
     sed -i "/^tls:/,/^[^ ]/ { s|server_name:.*|server_name: ${CF_Domain}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
     sed -i "/^tls:/,/^[^ ]/ { s|certificate_path:.*|certificate_path: \"/var/snap/adguard-home/common/certs/fullchain.pem\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
     sed -i "/^tls:/,/^[^ ]/ { s|private_key_path:.*|private_key_path: \"/var/snap/adguard-home/common/certs/private.key\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
 
-   LOGI "Проверка доступности порта 443 ..."
+    LOGI "Проверяем доступность порта 443... 🔍"
     if netstat -tuln | grep -q ":443 "; then
         while true; do
-            read -p "Стандартный порт 443 занят. Введите другой порт https для веб-интерфейса AdGuard: " HTTPS_PORT
+            read -p "⚠️ Стандартный порт 443 занят. Введите другой порт HTTPS для веб-интерфейса AdGuard: " HTTPS_PORT
             if [[ -n "$HTTPS_PORT" ]]; then
                 # Проверяем занятость введенного порта
                 if netstat -tuln | grep -q ":${HTTPS_PORT} "; then
                     LOGE "Порт ${HTTPS_PORT} уже занят. Пожалуйста, выберите другой порт. ❌"
                 else
                     sed -i "/^tls:/,/^[^ ]/ { s|port_https:.*|port_https: ${HTTPS_PORT}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
-                    LOGI "Теперь для веб-интерфейса AdGuard используется порт ${HTTPS_PORT} ."
+                    LOGI "Теперь для веб-интерфейса AdGuard используется порт ${HTTPS_PORT}. 🔄"
                     # Открываем порт в брандмауэре
                     sudo ufw allow "${HTTPS_PORT}"
-                    LOGI "Порт ${HTTPS_PORT} открыт в брандмауэре."
+                    LOGI "Порт ${HTTPS_PORT} открыт в брандмауэре. 🛡️"
                     break
                 fi
             else
@@ -239,13 +239,13 @@ install_cert_adguard() {
             fi
         done
     else
-        LOGI "Порт 443 свободен и будет использоваться для веб-интерфейса AdGuard Home."
+        LOGI "Порт 443 свободен и будет использоваться для веб-интерфейса AdGuard Home. ✅"
     fi
 
-    LOGI "Перезапускаем AdGuard Home 🔄..."
+    LOGI "Перезапускаем AdGuard Home... 🔄"
     snap restart adguard-home
 
-    LOGI "Сертификат установлен в AdGuard Home и шифрование включено! ✅"
+    LOGI "Сертификат установлен в AdGuard Home, и шифрование включено! 🎉"
 }
 
 
