@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
 # Копирование SSH-ключей и настройка прав доступа
 sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
 sudo chown -R root: /root/.ssh/
