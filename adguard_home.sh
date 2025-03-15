@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
 # Проверяем используется ли порт 53
 if lsof -i :53 | grep -q systemd-resolve; then
     echo "Порт 53 занят systemd-resolve, выполняем настройки..."
