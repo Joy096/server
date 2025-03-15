@@ -1,16 +1,11 @@
 #!/bin/bash
 
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
-
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
-
 # Функция для установки AdGuard Home
 install_adguard() {
+    echo ""
     echo "🔍 Проверяем, используется ли порт 53..."
     if lsof -i :53 | grep -q systemd-resolve; then
-        echo "⚠️ Порт 53 занят systemd-resolve, выполняем настройки..."
+        echo "⚠️  Порт 53 занят systemd-resolve, выполняем настройки..."
 
         # Отключаем DNSStubListener и настраиваем systemd-resolved
         sudo mkdir -p /etc/systemd/resolved.conf.d
@@ -28,10 +23,12 @@ install_adguard() {
     fi
 
     # Устанавливаем AdGuard Home через Snap
+    echo ""
     echo "🚀 Устанавливаем AdGuard Home..."
     sudo snap install adguard-home
 
     # Открываем необходимые порты в UFW
+    echo ""
     echo "🔓 Настраиваем брандмауэр..."
     sudo ufw allow 3000
     sudo ufw allow 53
@@ -39,17 +36,30 @@ install_adguard() {
     sudo ufw allow 784
     echo "✅ Брандмауэр настроен."
 
+    # Отображаем внешний IP для доступа к веб-панели
+    echo ""
     echo "🎉 Установка завершена! Перейдите в веб-панель для настройки:"
-    echo "🌍 http://$(hostname -I | awk '{print $1}'):3000"
+    echo "🌍 http://$(curl -s ifconfig.me):3000"
 }
 
 # Функция для удаления AdGuard Home
 uninstall_adguard() {
-    echo "🗑️ Удаляем AdGuard Home..."
+    echo ""
+    echo "🗑️  Удаляем AdGuard Home..."
     sudo snap remove adguard-home
     echo "✅ AdGuard Home удалён."
 
-    echo "♻️ Восстанавливаем настройки systemd-resolved..."
+    # Закрываем порты в UFW
+    echo ""
+    echo "🔒 Закрываем порты в брандмауэре..."
+    sudo ufw delete allow 3000
+    sudo ufw delete allow 53
+    sudo ufw delete allow 853
+    sudo ufw delete allow 784
+    echo "✅ Порты закрыты."
+
+    echo ""
+    echo "♻️  Восстанавливаем настройки systemd-resolved..."
     sudo rm -f /etc/systemd/resolved.conf.d/adguardhome.conf
     sudo mv /etc/resolv.conf.backup /etc/resolv.conf 2>/dev/null
     sudo systemctl reload-or-restart systemd-resolved
@@ -58,6 +68,7 @@ uninstall_adguard() {
 
 # Функция для установки сертификата
 install_certificate() {
+    echo ""
     echo "🔐 Устанавливаем сертификат для AdGuard Home..."
     wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh && bash cloudflare_ssl.sh
     echo "✅ Сертификат установлен."
@@ -67,10 +78,11 @@ install_certificate() {
 while true; do
     echo ""
     echo "🌟 Выберите действие:"
-    echo "1️⃣ Установка AdGuard Home"
-    echo "2️⃣ Удаление AdGuard Home"
-    echo "3️⃣ Установка сертификата для AdGuard Home"
-    echo "0️⃣ Выход"
+    echo "1️⃣  Установка AdGuard Home"
+    echo "2️⃣  Удаление AdGuard Home"
+    echo "3️⃣  Установка сертификата для AdGuard Home"
+    echo "0️⃣  Выход"
+    echo ""
     read -rp "👉 Введите номер пункта и нажмите Enter: " choice
 
     case $choice in
