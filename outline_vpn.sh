@@ -137,7 +137,6 @@ function uninstall_outline {
 }
 
 function main_menu {
-    clear
     echo "=============================="
     echo "      Outline VPN Installer"
     echo "=============================="
