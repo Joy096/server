@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
 # Переменные для хранения портов и API URL
 declare management_port=""
 declare access_key_port=""
