@@ -1,15 +1,10 @@
 #!/bin/bash
 
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
-
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
-
 if [[ $EUID -ne 0 ]]; then
     echo "❌ Этот скрипт должен выполняться от root!"
     exit 1
 fi
+
 
 # Функция установки TorrServer
 install_torrserver() {
@@ -59,10 +54,8 @@ install_torrserver() {
   fi
 
   # Настройка автообновления
-  wget https://raw.githubusercontent.com/Joy096/server/main/torr.sh
-  chmod +x torr.sh
-  (crontab -l 2>/dev/null; echo "30 4 * * * bash torr.sh > torr.log") | crontab -
-  echo "✅ Автообновление включено. Проверьте файл torr.log для получения информации."
+  (crontab -l 2>/dev/null; echo "30 4 * * * bash <(curl -Ls https://raw.githubusercontent.com/YouROK/TorrServer/master/installTorrServerLinux.sh) --update > torrserver_update.log 2>&1") | crontab -
+  echo "✅ Автообновление включено. Проверьте файл torrserver_update.log для получения информации."
 
  # Установка базовых настроек
   settings_file="/opt/torrserver/settings.json"
@@ -132,11 +125,11 @@ uninstall_torrserver() {
   fi
 
   # Удаление задачи автообновления из crontab
-  crontab -l | grep -v "bash torr.sh > torr.log" | crontab -
+  crontab -l | grep -v "bash <(curl -Ls https://raw.githubusercontent.com/YouROK/TorrServer/master/installTorrServerLinux.sh) --update > torrserver_update.log" | crontab -
   echo "✅ Автообновление отключено."
 
   # Удаление хвостов
-  rm -rf torr.sh torr.log /opt/torrserver/port.conf 2>/dev/null
+  rm -rf torrserver_update.sh torrserver_update.log /opt/torrserver/port.conf 2>/dev/null
   echo "✅ Очистка временных файлов завершена."
 }
 
@@ -332,6 +325,12 @@ EOF
 
 # Функция очистки кэша
 clear_cache() {
+  # Проверяем, установлен ли TorrServer в systemctl
+    if ! systemctl list-units --type=service --all | grep -q "torrserver"; then
+        echo "⚠️  TorrServer не установлен или не зарегистрирован как сервис systemd!"
+        return 1
+    fi
+    
   echo ""
   echo " Очистка кэша TorrServer..."
 
@@ -345,6 +344,12 @@ clear_cache() {
 
 # Функция для отображения адреса сервера
 show_server_address() {
+    # Проверяем, установлен ли TorrServer в systemctl
+    if ! systemctl list-units --type=service --all | grep -q "torrserver"; then
+        echo "⚠️  TorrServer не установлен или не зарегистрирован как сервис systemd!"
+        return 1
+    fi
+
     web_port=$(cat /opt/torrserver/port.conf 2>/dev/null)
 
     if [[ -z "$web_port" ]]; then
