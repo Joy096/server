@@ -6,6 +6,15 @@ SCRIPT_PATH=$(realpath "$0")
 # Удаляем скрипт после завершения
 trap 'rm -f "$SCRIPT_PATH"' EXIT
 
+# Проверка на root
+if [[ $EUID -ne 0 ]]; then
+    echo "❌ Этот скрипт должен выполняться от root!"
+    exit 1
+fi
+
+echo " Обновление списка пакетов и установка обновлений..."
+apt update && apt full-upgrade -y
+
 # Переменные для хранения портов и API URL
 declare management_port=""
 declare access_key_port=""
