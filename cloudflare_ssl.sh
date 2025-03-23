@@ -6,6 +6,15 @@ SCRIPT_PATH=$(realpath "$0")
 # Удаляем скрипт после завершения
 trap 'rm -f "$SCRIPT_PATH"' EXIT
 
+# Проверка на root
+if [[ $EUID -ne 0 ]]; then
+    echo "❌ Этот скрипт должен выполняться от root!"
+    exit 1
+fi
+
+echo " Обновление списка пакетов и установка обновлений..."
+apt update && apt full-upgrade -y
+
 # Цвета для сообщений
 green='\033[0;32m'
 red='\033[0;31m'
@@ -21,14 +30,14 @@ install_acme() {
     if ! command -v curl &>/dev/null; then
         LOGD "curl не найден. Устанавливаем curl ..."
         if [[ "$(command -v apt-get)" ]]; then
-            sudo apt-get update
-            sudo apt-get install -y curl
+             apt-get update
+             apt-get install -y curl
         elif [[ "$(command -v yum)" ]]; then
-            sudo yum install -y curl
+             yum install -y curl
         elif [[ "$(command -v dnf)" ]]; then
-            sudo dnf install -y curl
+             dnf install -y curl
         elif [[ "$(command -v pacman)" ]]; then
-            sudo pacman -S --noconfirm curl
+             pacman -S --noconfirm curl
         else
             LOGE "Не удалось установить curl: не найден менеджер пакетов ❌"
             return 1
@@ -193,7 +202,7 @@ install_cert_adguard() {
     LOGI "Создаем папку, если её нет... 📂"
     if [[ ! -d "${ADGUARD_CERT_DIR}" ]]; then
         LOGI "Создаем директорию ${ADGUARD_CERT_DIR}... 🛠️"
-        sudo mkdir -p "${ADGUARD_CERT_DIR}"
+            mkdir -p "${ADGUARD_CERT_DIR}"
         if [[ $? -ne 0 ]]; then
             LOGE "Ошибка создания директории ${ADGUARD_CERT_DIR} ❌"
             return 1
