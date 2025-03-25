@@ -12,9 +12,6 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-echo " Обновление списка пакетов и установка обновлений..."
-apt update && apt full-upgrade -y
-
 # Переменные для хранения портов и API URL
 declare management_port=""
 declare access_key_port=""
@@ -28,6 +25,11 @@ NC='\033[0m' # No Color
 CONFIG_FILE="/root/outline_data.txt"
 
 function install_outline {
+  echo ""
+  echo "🔄 Обновление списка пакетов и установка обновлений..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt update && apt full-upgrade -y && apt autoremove -y && apt clean
+
     echo ""
     echo "🚀 Установка Docker..."
     curl -fsSL https://get.docker.com/ | sh
