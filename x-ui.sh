@@ -187,6 +187,7 @@ while true; do
   echo "1️⃣  Установить 3x-ui"
   echo "2️⃣  Удалить 3x-ui"
   echo "3️⃣  Показать адрес сервера"
+  echo "4️⃣  Установить сертификат для x-ui"
   echo "0️⃣  Выход"
   echo "=============================="
   read -p "👉 Введите номер действия (0-3): " choice
@@ -195,6 +196,7 @@ while true; do
     1) install_x-ui ;;
     2) uninstall_x-ui ;;
     3) show_server_address ;;
+    4) wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh && bash cloudflare_ssl.sh
     0) echo "👋 Выход."; exit ;;
     *) echo "❌ Некорректный ввод. Попробуйте снова." ;;
   esac
