@@ -83,14 +83,6 @@ uninstall_adguard() {
     echo "✅ Systemd-resolved восстановлен."
 }
 
-# Функция для установки сертификата
-install_certificate() {
-    echo ""
-    echo "🔐 Устанавливаем сертификат для AdGuard Home..."
-    wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh && bash cloudflare_ssl.sh
-    echo "✅ Сертификат установлен."
-}
-
 # Меню
 while true; do
     echo ""
@@ -105,7 +97,7 @@ while true; do
     case $choice in
         1) install_adguard ;;
         2) uninstall_adguard ;;
-        3) install_certificate ;;
+        3) wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh && bash cloudflare_ssl.sh ;;
         0) echo "👋 Выход."; exit ;;
         *) echo "❌ Некорректный ввод. Попробуйте снова." ;;
     esac
