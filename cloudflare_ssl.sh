@@ -12,9 +12,6 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-echo " Обновление списка пакетов и установка обновлений..."
-apt update && apt full-upgrade -y
-
 # Цвета для сообщений
 green='\033[0;32m'
 red='\033[0;31m'
@@ -26,6 +23,11 @@ LOGE() { echo -e "❌ ${red}$* ${plain}"; }
 LOGD() { echo -e "⚡ ${yellow}$* ${plain}"; }
 
 install_acme() {
+  echo ""
+  echo "🔄 Обновление списка пакетов и установка обновлений..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt update && apt full-upgrade -y && apt autoremove -y && apt clean
+  
     # Проверяем наличие curl
     if ! command -v curl &>/dev/null; then
         LOGD "curl не найден. Устанавливаем curl ..."
