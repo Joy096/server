@@ -14,8 +14,9 @@ fi
 # Функция установки TorrServer
 install_torrserver() {
   echo ""
-  echo " Обновление списка пакетов и установка обновлений..."
-  apt update && apt full-upgrade -y
+  echo "🔄 Обновление списка пакетов и установка обновлений..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt update && apt full-upgrade -y && apt autoremove -y && apt clean
 
   # Проверка и установка jq
     if ! command -v jq &>/dev/null; then
