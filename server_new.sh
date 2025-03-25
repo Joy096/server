@@ -71,7 +71,7 @@ sudo chmod +x /root/updater.sh
 #
 # m h  dom mon dow   command"; 
 sudo crontab -u root -l 2>/dev/null; 
-echo "0 4 * * * bash /root/updater.sh > /var/log/updater.log") | sudo crontab -u root -
+echo "0 4 * * * bash /root/updater.sh > /root/updater.log") | sudo crontab -u root -
  
 # Установка aptitude
 if apt-cache show aptitude > /dev/null 2>&1; then
