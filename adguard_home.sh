@@ -12,11 +12,13 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
-echo " Обновление списка пакетов и установка обновлений..."
-apt update && apt full-upgrade -y
-
 # Функция для установки AdGuard Home
 install_adguard() {
+  echo ""
+  echo "🔄 Обновление списка пакетов и установка обновлений..."
+  export DEBIAN_FRONTEND=noninteractive
+  apt update && apt full-upgrade -y && apt autoremove -y && apt clean
+
     echo ""
     echo "🔍 Проверяем, используется ли порт 53..."
     if lsof -i :53 | grep -q systemd-resolve; then
