@@ -8,9 +8,11 @@ trap 'rm -f "$SCRIPT_PATH"' EXIT
 
 # Функция установки qBittorrent с веб-интерфейсом
 install_qbittorrent() {
-    echo "Обновление пакетов..."
-    apt update && apt upgrade -y
-
+    echo ""
+    echo "🔄 Обновление списка пакетов и установка обновлений..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt update && apt full-upgrade -y && apt autoremove -y && apt clean
+  
     echo "Установка qBittorrent-nox..."
     apt install -y qbittorrent-nox
 
