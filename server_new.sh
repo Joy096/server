@@ -72,6 +72,8 @@ sudo chmod +x /root/updater.sh
 # m h  dom mon dow   command"; 
 sudo crontab -u root -l 2>/dev/null; 
 echo "0 4 * * * bash /root/updater.sh > /root/updater.log") | sudo crontab -u root -
+
+echo "30 4 * * * bash <(curl -Ls https://raw.githubusercontent.com/YouROK/TorrServer/master/installTorrServerLinux.sh) --update > torrserver_update.log 2>&1")
  
 # Установка aptitude
 if apt-cache show aptitude > /dev/null 2>&1; then
