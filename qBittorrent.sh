@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
 # Функция установки qBittorrent с веб-интерфейсом
 install_qbittorrent() {
     echo "Обновление пакетов..."
