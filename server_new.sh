@@ -16,6 +16,9 @@ sudo apt update
 sudo apt upgrade -y
 sudo apt autoremove -y
 
+# Установка некоторых необходимых пакетов
+apt install git -y
+
 # Остановка и отключение netfilter-persistent
 sudo systemctl stop netfilter-persistent
 sudo systemctl disable netfilter-persistent
