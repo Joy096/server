@@ -98,7 +98,7 @@ while true; do
         1) install_adguard ;;
         2) uninstall_adguard ;;
         3) wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh && bash cloudflare_ssl.sh ;;
-        0) echo "👋 Выход."; echo""; exit ;;
+        0) echo "👋 Выход."; echo ""; exit ;;
         *) echo "❌ Некорректный ввод. Попробуйте снова." ;;
     esac
 done
