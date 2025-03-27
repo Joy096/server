@@ -197,7 +197,7 @@ while true; do
     2) uninstall_x-ui ;;
     3) show_server_address ;;
     4) wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh && bash cloudflare_ssl.sh ;;
-    0) echo "👋 Выход."; exit ;;
+    0) echo "👋 Выход."; echo ""; exit ;;
     *) echo "❌ Некорректный ввод. Попробуйте снова." ;;
   esac
 done
