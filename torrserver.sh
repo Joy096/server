@@ -389,7 +389,7 @@ while true; do
     3) manage_auth ;;
     4) clear_cache ;;
     5) show_server_address ;;
-    0) echo " Выход."; exit ;;
+    0) echo " Выход."; echo ""; exit ;;
     *) echo "❌ Некорректный ввод. Попробуйте снова." ;;
   esac
 done
