@@ -281,7 +281,7 @@ while true; do
         4) install_cert_xui ;;
         5) install_cert_nextcloud ;;
         6) install_cert_adguard ;;
-        0) echo -e "👋 Выход..."; exit 0 ;;
+        0) echo -e "👋 Выход..."; echo ""; exit 0 ;;
         *) echo -e "⚠️ Неверный ввод! Пожалуйста, выберите 0-5." ;;
     esac
 done
