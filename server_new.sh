@@ -17,7 +17,7 @@ sudo apt upgrade -y
 sudo apt autoremove -y
 
 # Установка некоторых необходимых пакетов
-apt install git -y
+sudo apt install git -y
 
 # Остановка и отключение netfilter-persistent
 sudo systemctl stop netfilter-persistent
@@ -44,10 +44,6 @@ sudo dpkg-reconfigure -f noninteractive locales # Переконфигуриру
 
 # Настройка часового пояса
 sudo timedatectl set-timezone Europe/Kyiv
-
-# Скачивание и настройка скрипта updater.sh 
-sudo wget -P /root/ https://raw.githubusercontent.com/Joy096/server/main/updater.sh
-sudo chmod +x /root/updater.sh
 
 # Добавление задания в cron для пользователя root
 (echo "# Edit this file to introduce tasks to be run by cron.
