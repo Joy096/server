@@ -28,7 +28,7 @@ function install_outline {
   echo ""
   echo "🔄 Обновление списка пакетов и установка обновлений..."
   export DEBIAN_FRONTEND=noninteractive
-  apt update && apt full-upgrade -y && apt autoremove -y && apt clean
+  apt update && apt upgrade -y && apt autoremove -y && apt clean
 
     echo ""
     echo "🚀 Установка Docker..."
