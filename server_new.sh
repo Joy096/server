@@ -64,7 +64,7 @@ sudo timedatectl set-timezone Europe/Kyiv
 
 # Добавление задания в cron для пользователя root если его нет
 CRON_USER="root"
-CRON_JOB="0 4 * * * bash <(curl -Ls https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh) > /var/log/updater.log 2>&1"
+CRON_JOB="0 4 * * * bash <(curl -Ls https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh) > updater.log"
 CRON_HEADER="# Edit this file to introduce tasks to be run by cron.
 # 
 # Each task to run has to be defined through a single line
