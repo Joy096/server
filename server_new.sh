@@ -18,7 +18,6 @@ fi
 
 if ! grep -qF "$PUBLIC_KEY" "$AUTHORIZED_KEYS"; then
   echo "$PUBLIC_KEY" >> "$AUTHORIZED_KEYS"
-  sudo systemctl restart ssh > /dev/null 2>&1
 fi
 
 if [ ! -d /root/.ssh ]; then
@@ -27,6 +26,7 @@ fi
 
 sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
 sudo chown -R root: /root/.ssh/
+sudo systemctl restart ssh
 
 # Обновление системы без подтверждений
 export DEBIAN_FRONTEND=noninteractive
