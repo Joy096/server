@@ -62,33 +62,48 @@ sudo dpkg-reconfigure -f noninteractive locales # Переконфигуриру
 # Настройка часового пояса
 sudo timedatectl set-timezone Europe/Kyiv
 
-# Добавление задания в cron для пользователя root
-(echo "# Edit this file to introduce tasks to be run by cron.
-#
+# Добавление задания в cron для пользователя root если его нет
+CRON_USER="root"
+CRON_JOB="0 4 * * * bash <(curl -Ls https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh) > /var/log/updater.log 2>&1"
+CRON_HEADER="# Edit this file to introduce tasks to be run by cron.
+# 
 # Each task to run has to be defined through a single line
 # indicating with different fields when the task will be run
 # and what command to run for the task
-#
+# 
 # To define the time you can provide concrete values for
 # minute (m), hour (h), day of month (dom), month (mon),
 # and day of week (dow) or use '*' in these fields (for 'any').
-#
+# 
 # Notice that tasks will be started based on the cron's system
 # daemon's notion of time and timezones.
-#
+# 
 # Output of the crontab jobs (including errors) is sent through
 # email to the user the crontab file belongs to (unless redirected).
-#
+# 
 # For example, you can run a backup of all your user accounts
 # at 5 a.m every week with:
 # 0 5 * * 1 tar -zcf /var/backups/home.tgz /home/
-#
+# 
 # For more information see the manual pages of crontab(5) and cron(8)
-#
-# m h  dom mon dow   command"; 
-sudo crontab -u root -l 2>/dev/null; 
-echo "0 4 * * * bash <(curl -Ls https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh) > updater.log") | sudo crontab -u root -
- 
+# 
+# m h  dom mon dow   command"
+
+CRON_TEMP=$(mktemp)
+CURRENT_CRONTAB=$(sudo crontab -u "$CRON_USER" -l 2>/dev/null) 
+
+if ! grep -qF "$CRON_JOB" <<< "$CURRENT_CRONTAB"; then
+  printf "%s\n" "$CRON_HEADER" > "$CRON_TEMP"
+  if [ -n "$CURRENT_CRONTAB" ]; then
+      printf "%s\n" "$CURRENT_CRONTAB" >> "$CRON_TEMP"
+  fi
+  printf "%s\n" "$CRON_JOB" >> "$CRON_TEMP"
+  
+  sudo crontab -u "$CRON_USER" "$CRON_TEMP"
+fi
+
+rm "$CRON_TEMP"
+
 # Установка aptitude
 if apt-cache show aptitude > /dev/null 2>&1; then
     :
