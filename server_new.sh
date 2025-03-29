@@ -26,7 +26,6 @@ fi
 
 sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
 sudo chown -R root: /root/.ssh/
-sudo systemctl restart ssh
 
 # Обновление системы без подтверждений
 export DEBIAN_FRONTEND=noninteractive
