@@ -1,4 +1,4 @@
-#bin/bash
+#!/bin/bash
 
 # Получаем реальный путь к скрипту
 SCRIPT_PATH=$(realpath "$0")
