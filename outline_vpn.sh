@@ -25,28 +25,26 @@ NC='\033[0m' # No Color
 CONFIG_FILE="/root/outline_data.txt"
 
 function install_outline {
-  echo ""
-  echo "🔄 Обновление списка пакетов и установка обновлений..."
-  export DEBIAN_FRONTEND=noninteractive
-  apt update && apt upgrade -y && apt autoremove -y && apt clean
-
     echo ""
-    echo "🚀 Установка Docker..."
+    echo "Обновление списка пакетов и установка обновлений..." # Убрали 🔄
+    export DEBIAN_FRONTEND=noninteractive
+    apt update && apt upgrade -y && apt autoremove -y && apt clean
+    echo ""
+    echo "Установка Docker..." # Убрали 🚀
     curl -fsSL https://get.docker.com/ | sh
-
-    echo "🔧 Установка Outline VPN..."
+    echo "Установка Outline VPN..." # Убрали 🔧
     install_output=$(yes Y | SB_IMAGE=oreoluwa/shadowbox:daily sudo --preserve-env bash -c "$(curl -Ls https://raw.githubusercontent.com/EricQmore/installer/main/install_server.sh)" install_server.sh 2>&1)
 
     api_info=$(echo "$install_output" | grep -oP '{"apiUrl":"https://.*?","certSha256":"[a-fA-F0-9]{64}"}')
     management_port=$(echo "$install_output" | grep -oP '(?<=Management port )\d+')
     access_key_port=$(echo "$install_output" | grep -oP '(?<=Access key port )\d+')
 
-    echo "💾 Сохранение API URL и портов в файл конфигурации..."
+    echo "Сохранение API URL и портов в файл конфигурации..." # Убрали 💾
     echo "$api_info" > "$CONFIG_FILE"
     echo "$management_port" >> "$CONFIG_FILE"
     echo "$access_key_port" >> "$CONFIG_FILE"
 
-    echo "🛡 Открытие портов: $management_port (TCP), $access_key_port (TCP и UDP) в ufw..."
+    echo "Открытие портов: $management_port (TCP), $access_key_port (TCP и UDP) в ufw..." # Убрали 🛡️
     ufw allow "$management_port/tcp"
     ufw allow "$access_key_port/tcp"
     ufw allow "$access_key_port/udp"
@@ -56,17 +54,16 @@ function install_outline {
     echo ""
     echo -e "${GREEN}${api_info}${NC}"
     echo ""
-    read -p "🔹 Нажмите Enter для продолжения..."
-
+    read -p "Нажмите Enter для продолжения..." # Убрали 🔹
     echo ""
-    echo -e "🎉 Установка Outline VPN завершена!"
+    echo "Установка Outline VPN завершена!" # Убрали 🎉
 }
 
 function show_api_url {
     if [[ -f $CONFIG_FILE ]]; then
         api_info=$(sed -n '1p' "$CONFIG_FILE")
         echo ""
-        echo -e "🔗 API URL для вашего Outline сервера:"
+        echo "API URL для вашего Outline сервера:" # Убрали 🔗
         echo ""
         echo -e "${GREEN}${api_info}${NC}"
         echo ""
@@ -76,13 +73,11 @@ function show_api_url {
 }
 
 function generate_invite_link {
-    read -p "🔑 Введите ключ для генерации ссылки-приглашения: " invite_key
-
+    read -p "Введите ключ для генерации ссылки-приглашения: " invite_key # Убрали 🔑
     if [[ -z "$invite_key" ]]; then
         echo "⚠️ Ключ не может быть пустым! Попробуйте снова."
         return
     fi
-
     invite_link="https://s3.amazonaws.com/outline-vpn/invite.html#/ru/invite/${invite_key}"
     echo ""
     echo "✅ Ссылка-приглашение сгенерирована:"
@@ -93,7 +88,7 @@ function generate_invite_link {
 
 function uninstall_outline {
     if [[ -f $CONFIG_FILE ]]; then
-        echo "📂 Чтение портов из файла конфигурации..."
+        echo "Чтение портов из файла конфигурации..." # Убрали 📂
         readarray -t ports < "$CONFIG_FILE"
         api_info=${ports[0]}
         management_port=${ports[1]}
@@ -103,62 +98,44 @@ function uninstall_outline {
     fi
 
     if [[ -n $management_port ]]; then
-        echo "🛑 Удаление порта управления $management_port..."
+        echo "Удаление порта управления $management_port..." # Убрали 🛑
         ufw delete allow "$management_port/tcp"
     fi
-
     if [[ -n $access_key_port ]]; then
-        echo "🛑 Удаление порта доступа $access_key_port..."
+        echo "Удаление порта доступа $access_key_port..." # Убрали 🛑
         ufw delete allow "$access_key_port/tcp"
         ufw delete allow "$access_key_port/udp"
     fi
 
-    echo "🗑 Удаление Outline VPN..."
+    echo "Удаление Outline VPN..." # Убрали 🗑️
     docker ps -a | grep shadowbox | awk '{print $1}' | xargs docker stop
     docker ps -a | grep shadowbox | awk '{print $1}' | xargs docker rm
     docker images | grep oreoluwa/shadowbox | awk '{print $3}' | xargs docker rmi
     rm -rf /opt/outline
     rm -rf /var/lib/outline
-
     rm -f "$CONFIG_FILE"
-
     echo "✅ Outline VPN успешно удалён!"
 }
 
 function main_menu {
     while true; do
         echo "=============================="
-        echo "      🌍 Outline VPN Installer"
+        echo "   Outline VPN Installer" # Убрали 🌍
         echo "=============================="
-        echo "1️⃣  Установка Outline VPN"
-        echo "2️⃣  Удаление Outline VPN"
-        echo "3️⃣  🔗 Генерация ссылки-приглашения на подключение"
-        echo "4️⃣  📜 Отобразить apiUrl"
-        echo "5️⃣  🚪 Выход"
+        echo "1. Установка Outline VPN" # Убрали 1️⃣
+        echo "2. Удаление Outline VPN" # Убрали 2️⃣
+        echo "3. Генерация ссылки-приглашения на подключение" # Убрали 3️⃣ 🔗
+        echo "4. Отобразить apiUrl" # Убрали 4️⃣ 📜
+        echo "5. Выход" # Убрали 5️⃣ 🚪
         echo "=============================="
-        read -p "📌 Выберите опцию [1-5]: " choice
-
+        read -p "Выберите опцию [1-5]: " choice # Убрали 📌
         case $choice in
-            1)
-                install_outline
-                ;;
-            2)
-                uninstall_outline
-                ;;
-            3)
-                generate_invite_link
-                ;;
-            4)
-                show_api_url
-                ;;
-            5)
-                echo "👋 Выход из программы..."
-                echo ""
-                exit 0
-                ;;
-            *)
-                echo "⚠️ Неправильный выбор! Попробуйте снова."
-                ;;
+            1) install_outline ;;
+            2) uninstall_outline ;;
+            3) generate_invite_link ;;
+            4) show_api_url ;;
+            5) echo "Выход из программы..." echo "" exit 0 ;; # Убрали 👋
+            *) echo "⚠️ Неправильный выбор! Попробуйте снова." ;;
         esac
         echo ""
     done
