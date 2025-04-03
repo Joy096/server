@@ -20,30 +20,31 @@ plain='\033[0m'
 
 LOGI() { echo -e "✅ ${green}$* ${plain}"; }
 LOGE() { echo -e "❌ ${red}$* ${plain}"; }
-LOGD() { echo -e "⚡ ${yellow}$* ${plain}"; }
+LOGD() { echo -e "   ${yellow}$* ${plain}"; } # Убрали ⚡ из LOGD
 
 install_acme() {
-  echo ""
-  echo "🔄 Обновление списка пакетов и установка обновлений..."
-  export DEBIAN_FRONTEND=noninteractive
-  apt update && apt upgrade -y && apt autoremove -y && apt clean
-  
+    echo ""
+    echo "Обновление списка пакетов и установка обновлений..."
+    export DEBIAN_FRONTEND=noninteractive
+    apt update && apt upgrade -y && apt autoremove -y && apt clean
+
     # Проверяем наличие curl
     if ! command -v curl &>/dev/null; then
         LOGD "curl не найден. Устанавливаем curl ..."
         if [[ "$(command -v apt-get)" ]]; then
-             apt-get update
-             apt-get install -y curl
+            apt-get update
+            apt-get install -y curl
         elif [[ "$(command -v yum)" ]]; then
-             yum install -y curl
+            yum install -y curl
         elif [[ "$(command -v dnf)" ]]; then
-             dnf install -y curl
+            dnf install -y curl
         elif [[ "$(command -v pacman)" ]]; then
-             pacman -S --noconfirm curl
+            pacman -S --noconfirm curl
         else
             LOGE "Не удалось установить curl: не найден менеджер пакетов ❌"
             return 1
         fi
+
         if [[ $? -ne 0 ]]; then
             LOGE "Ошибка установки curl ❌"
             return 1
@@ -53,11 +54,11 @@ install_acme() {
 
     # Проверяем наличие acme.sh
     if command -v ~/.acme.sh/acme.sh &>/dev/null; then
-        LOGI "acme.sh уже установлен 🚀"
+        LOGI "acme.sh уже установлен ✅" # Изменили эмодзи
         return 0
     fi
 
-    LOGI "Устанавливаем acme.sh 📥..."
+    LOGI "Устанавливаем acme.sh..." # Убрали эмодзи
     curl -s https://get.acme.sh | sh
     if [[ $? -ne 0 ]]; then
         LOGE "Ошибка установки acme.sh ❌"
@@ -70,48 +71,42 @@ install_acme() {
 ssl_cert_issue_CF() {
     install_acme || { LOGE "Не удалось установить acme.sh ❌"; exit 1; }
     echo ""
-    read -p "🌍 Введите домен: " CF_Domain
-    echo -e "🔑 Введите Cloudflare Global API Key: "
-    echo -e "   Его можно найти по ссылке: \e[33mhttps://dash.cloudflare.com/profile/api-tokens\e[0m"
-    echo -ne "\033[2A\033[38C"  
+    read -p "Введите домен: " CF_Domain
+    echo -e "Введите Cloudflare Global API Key: " # Убрали эмодзи
+    echo -e " Его можно найти по ссылке: \e[33mhttps://dash.cloudflare.com/profile/api-tokens\e[0m"
+    echo -ne "\033[2A\033[38C"
     read -r CF_GlobalKey
-    echo ""    
-    read -p "📧 Введите email: " CF_AccountEmail
-
+    echo ""
+    read -p "Введите email: " CF_AccountEmail # Убрали эмодзи
     export CF_Key="${CF_GlobalKey}"
     export CF_Email="${CF_AccountEmail}"
 
-    LOGI "Запрашиваем сертификат для ${CF_Domain} 🔄..."
+    LOGI "Запрашиваем сертификат для ${CF_Domain}..." # Убрали эмодзи
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-    ~/.acme.sh/acme.sh --issue --dns dns_cf -d "${CF_Domain}" -d "*.${CF_Domain}" --log || {
-        LOGE "Ошибка выпуска сертификата ❌"; exit 1;
-    }
+    ~/.acme.sh/acme.sh --issue --dns dns_cf -d "${CF_Domain}" -d "*.${CF_Domain}" --log || { LOGE "Ошибка выпуска сертификата ❌"; exit 1; }
 
-    LOGI "Настраиваем автообновление 🔄..."
-    ~/.acme.sh/acme.sh --upgrade --auto-upgrade || {
-        LOGE "Ошибка настройки автообновления ❌"; exit 1;
-    }
+    LOGI "Настраиваем автообновление..." # Убрали эмодзи
+    ~/.acme.sh/acme.sh --upgrade --auto-upgrade || { LOGE "Ошибка настройки автообновления ❌"; exit 1; }
 
     CERT_DIR="/root/my_cert/${CF_Domain}"
     mkdir -p "${CERT_DIR}"
 
-    LOGI "Копируем файлы сертификата в ${CERT_DIR} 📂..."
+    LOGI "Копируем файлы сертификата в ${CERT_DIR}..." # Убрали эмодзи
     ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
         --cert-file "${CERT_DIR}/cert.pem" \
         --key-file "${CERT_DIR}/private.key" \
         --fullchain-file "${CERT_DIR}/fullchain.pem" \
         --ca-file "${CERT_DIR}/ca.pem"
 
-    echo -e "\n🎉 ${green}Файлы сертификата успешно созданы и сохранены в папку: ${CERT_DIR}${plain}"
-    echo "📂 Список файлов сертификата:"
+    echo -e "\n✅ ${green}Файлы сертификата успешно созданы и сохранены в папку: ${CERT_DIR}${plain}" # Заменили 🎉 на ✅
+    echo "Список файлов сертификата:" # Убрали эмодзи
     find "${CERT_DIR}" -type f | while read file; do
-        echo -e "   📄 ${file}"
+        echo -e "   ${file}" # Убрали эмодзи
     done
 }
 
 remove_acme() {
     LOGI "Начинаем удаление acme.sh..."
-
     if [ -d "$HOME/.acme.sh" ]; then
         # Удаляем acme.sh с помощью команды --uninstall
         ~/.acme.sh/acme.sh --uninstall
@@ -121,22 +116,22 @@ remove_acme() {
             LOGE "Ошибка удаления acme.sh ❌"
         fi
     else
-        LOGI "acme.sh не найден, ничего удалять не нужно 🟢"
+        LOGI "acme.sh не найден, ничего удалять не нужно." # Убрали эмодзи
     fi
 
-         # Проверяем и удаляем каталог /.acme.sh/
+    # Проверяем и удаляем каталог /.acme.sh/
     if [ -d "$HOME/.acme.sh" ]; then
         rm -rf "$HOME/.acme.sh"
         LOGI "Удалён каталог: $HOME/.acme.sh ✅"
     else
-        LOGI "Каталог /.acme.sh/ не найден, ничего удалять не нужно 🟢"
+        LOGI "Каталог /.acme.sh/ не найден, ничего удалять не нужно." # Убрали эмодзи
     fi
 
     if [ -d "/root/my_cert" ]; then
         rm -rf "/root/my_cert"
         LOGI "Удалена папка: /root/my_cert ✅"
     else
-        LOGI "Папка /root/my_cert не найдена, пропускаем 🟢"
+        LOGI "Папка /root/my_cert не найдена, пропускаем." # Убрали эмодзи
     fi
 
     LOGI "Удаление завершено ✅"
@@ -148,14 +143,14 @@ show_cert_path() {
         return
     fi
 
-    echo -e "📂 Доступные файлы сертификата:"
+    echo -e "Доступные файлы сертификата:" # Убрали эмодзи
     find "/root/my_cert" -type f | while read file; do
-        echo -e "   📄 ${file}"
+        echo -e "   ${file}" # Убрали эмодзи
     done
 }
 
 install_cert_xui() {
-    read -p "🌍 Введите домен, для которого установить сертификат в X-UI: " CF_Domain
+    read -p "Введите домен, для которого установить сертификат в X-UI: " CF_Domain # Убрали эмодзи
     CERT_DIR="/root/my_cert/${CF_Domain}"
 
     if [[ ! -f "${CERT_DIR}/fullchain.pem" || ! -f "${CERT_DIR}/private.key" ]]; then
@@ -163,15 +158,15 @@ install_cert_xui() {
         return
     fi
 
-    LOGI "Устанавливаем сертификат в 3X-UI 🔧..."
+    LOGI "Устанавливаем сертификат в 3X-UI..." # Убрали эмодзи
     /usr/local/x-ui/x-ui cert -webCert "${CERT_DIR}/fullchain.pem" -webCertKey "${CERT_DIR}/private.key"
-
     systemctl restart x-ui
-    LOGI "Сертификат установлен в 3X-UI и панель перезапущена!"
+
+    LOGI "Сертификат установлен в 3X-UI и панель перезапущена! ✅"
 }
 
 install_cert_nextcloud() {
-    read -p "🌍 Введите домен, для которого установить сертификат в Nextcloud: " CF_Domain
+    read -p "Введите домен, для которого установить сертификат в Nextcloud: " CF_Domain # Убрали эмодзи
     CERT_DIR="/root/my_cert/${CF_Domain}"
     NEXTCLOUD_CERT_DIR="/var/snap/nextcloud/current/certs/custom/"
 
@@ -180,56 +175,56 @@ install_cert_nextcloud() {
         return
     fi
 
-    LOGI "Копируем сертификаты в Nextcloud 📂..."
+    LOGI "Копируем сертификаты в Nextcloud..." # Убрали эмодзи
     ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
         --cert-file "${NEXTCLOUD_CERT_DIR}/cert.pem" \
         --key-file "${NEXTCLOUD_CERT_DIR}/private.key" \
         --fullchain-file "${NEXTCLOUD_CERT_DIR}/fullchain.pem"
 
-    LOGI "Активируем кастомный сертификат в Nextcloud 🔧..."
+    LOGI "Активируем кастомный сертификат в Nextcloud..." # Убрали эмодзи
     cd "${NEXTCLOUD_CERT_DIR}" || { LOGE "Ошибка: не удалось перейти в ${NEXTCLOUD_CERT_DIR}"; return; }
     nextcloud.enable-https custom ./cert.pem ./private.key ./fullchain.pem
 
-    LOGI "Перезапускаем Nextcloud 🔧..."
+    LOGI "Перезапускаем Nextcloud..." # Убрали эмодзи
     snap restart nextcloud
-    
+
     LOGI "Сертификат установлен в Nextcloud и панель перезапущена! ✅"
 }
 
 install_cert_adguard() {
-    read -p "🌍 Введите домен, для которого установить сертификат в AdGuardHome: " CF_Domain
+    read -p "Введите домен, для которого установить сертификат в AdGuardHome: " CF_Domain # Убрали эмодзи
     CERT_DIR="/root/my_cert/${CF_Domain}"
     ADGUARD_CERT_DIR="/var/snap/adguard-home/common/certs/"
 
-    LOGI "Создаем папку, если её нет... 📂"
+    LOGI "Создаем папку, если её нет..." # Убрали эмодзи
     if [[ ! -d "${ADGUARD_CERT_DIR}" ]]; then
-        LOGI "Создаем директорию ${ADGUARD_CERT_DIR}... 🛠️"
-            mkdir -p "${ADGUARD_CERT_DIR}"
+        LOGI "Создаем директорию ${ADGUARD_CERT_DIR}..." # Убрали эмодзи
+        mkdir -p "${ADGUARD_CERT_DIR}"
         if [[ $? -ne 0 ]]; then
             LOGE "Ошибка создания директории ${ADGUARD_CERT_DIR} ❌"
             return 1
         fi
     else
-        LOGI "Директория ${ADGUARD_CERT_DIR} уже существует 🟢"
+        LOGI "Директория ${ADGUARD_CERT_DIR} уже существует." # Убрали эмодзи
     fi
-    
+
     if [[ ! -f "${CERT_DIR}/fullchain.pem" || ! -f "${CERT_DIR}/private.key" ]]; then
         LOGE "Сертификаты не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
         return
     fi
 
-    LOGI "Копируем сертификат в AdGuard Home... 📥"
+    LOGI "Копируем сертификат в AdGuard Home..." # Убрали эмодзи
     ~/.acme.sh/acme.sh --install-cert -d "${CF_Domain}" \
         --key-file "${ADGUARD_CERT_DIR}/private.key" \
         --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem"
 
-    LOGI "Обновляем конфигурацию AdGuard Home... 🔧"
-    sed -i "/^tls:/,/^[^ ]/ { s|enabled: false|enabled: true|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
-    sed -i "/^tls:/,/^[^ ]/ { s|server_name:.*|server_name: ${CF_Domain}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
-    sed -i "/^tls:/,/^[^ ]/ { s|certificate_path:.*|certificate_path: \"/var/snap/adguard-home/common/certs/fullchain.pem\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
-    sed -i "/^tls:/,/^[^ ]/ { s|private_key_path:.*|private_key_path: \"/var/snap/adguard-home/common/certs/private.key\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+    LOGI "Обновляем конфигурацию AdGuard Home..." # Убрали эмодзи
+    sed -i "/^tls:/,/^\[^ \]/ { s|enabled: false|enabled: true|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i "/^tls:/,/^\[^ \]/ { s|server_name:.*|server_name: ${CF_Domain}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i "/^tls:/,/^\[^ \]/ { s|certificate_path:.*|certificate_path: \"/var/snap/adguard-home/common/certs/fullchain.pem\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+    sed -i "/^tls:/,/^\[^ \]/ { s|private_key_path:.*|private_key_path: \"/var/snap/adguard-home/common/certs/private.key\"|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
 
-    LOGI "Проверяем доступность порта 443... 🔍"
+    LOGI "Проверяем доступность порта 443..." # Убрали эмодзи
     if netstat -tuln | grep -q ":443 "; then
         while true; do
             read -p "⚠️ Стандартный порт 443 занят. Введите другой порт HTTPS для веб-интерфейса AdGuard: " HTTPS_PORT
@@ -238,11 +233,11 @@ install_cert_adguard() {
                 if netstat -tuln | grep -q ":${HTTPS_PORT} "; then
                     LOGE "Порт ${HTTPS_PORT} уже занят. Пожалуйста, выберите другой порт. ❌"
                 else
-                    sed -i "/^tls:/,/^[^ ]/ { s|port_https:.*|port_https: ${HTTPS_PORT}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
-                    LOGI "Теперь для веб-интерфейса AdGuard используется порт ${HTTPS_PORT}. 🔄"
+                    sed -i "/^tls:/,/^\[^ \]/ { s|port_https:.*|port_https: ${HTTPS_PORT}|; }" /var/snap/adguard-home/current/AdGuardHome.yaml
+                    LOGI "Теперь для веб-интерфейса AdGuard используется порт ${HTTPS_PORT}." # Убрали эмодзи
                     # Открываем порт в брандмауэре
                     sudo ufw allow "${HTTPS_PORT}"
-                    LOGI "Порт ${HTTPS_PORT} открыт в брандмауэре. 🛡️"
+                    LOGI "Порт ${HTTPS_PORT} открыт в брандмауэре." # Убрали эмодзи
                     break
                 fi
             else
@@ -253,27 +248,26 @@ install_cert_adguard() {
         LOGI "Порт 443 свободен и будет использоваться для веб-интерфейса AdGuard Home. ✅"
     fi
 
-    LOGI "Перезапускаем AdGuard Home... 🔄"
+    LOGI "Перезапускаем AdGuard Home..." # Убрали эмодзи
     snap restart adguard-home
 
-    LOGI "Сертификат установлен в AdGuard Home, и шифрование включено! 🎉"
+    LOGI "Сертификат установлен в AdGuard Home, и шифрование включено! ✅" # Заменили 🎉 на ✅
 }
 
 # Главное меню
 while true; do
     echo "================================"
-    echo "🛡️  Cloudflare SSL Certificate 🔑"
+    echo "   Cloudflare SSL Certificate   " # Убрали эмодзи
     echo "================================"
-    echo -e "1️⃣  Установить acme и выпустить сертификат с автообновлением 🔐"
-    echo -e "2️⃣  Удалить acme.sh, сертификаты, cron-задачу и папку my_cert 🗑️"
-    echo -e "3️⃣  Показать путь к файлам сертификата 📄"
-    echo -e "4️⃣  Установить сертификат в 3X-UI 🔧"
-    echo -e "5️⃣  Установить сертификат в Nextcloud 🔧"
-    echo -e "6️⃣  Установить сертификат в AdGuard Home 🔧"
-    echo -e "0️⃣  Выйти ❌"
+    echo "1. Установить acme и выпустить сертификат с автообновлением" # Убрали эмодзи
+    echo "2. Удалить acme.sh, сертификаты, cron-задачу и папку my_cert" # Убрали эмодзи
+    echo "3. Показать путь к файлам сертификата" # Убрали эмодзи
+    echo "4. Установить сертификат в 3X-UI" # Убрали эмодзи
+    echo "5. Установить сертификат в Nextcloud" # Убрали эмодзи
+    echo "6. Установить сертификат в AdGuard Home" # Убрали эмодзи
+    echo "0. Выйти ❌" # Оставляем ❌ для выхода, как просили
     echo "================================"
-    read -p "📌 Введите номер действия (0-5): " choice
-
+    read -p "Введите номер действия (0-6): " choice # Убрали эмодзи, изменили диапазон на 0-6
     case "$choice" in
         1) ssl_cert_issue_CF ;;
         2) remove_acme ;;
@@ -281,7 +275,7 @@ while true; do
         4) install_cert_xui ;;
         5) install_cert_nextcloud ;;
         6) install_cert_adguard ;;
-        0) echo -e "👋 Выход..."; echo ""; exit 0 ;;
-        *) echo -e "⚠️ Неверный ввод! Пожалуйста, выберите 0-5." ;;
+        0) echo "Выход..."; echo ""; exit 0 ;; # Убрали эмодзи
+        *) echo "⚠️ Неверный ввод! Пожалуйста, выберите 0-6." ;; # Оставляем ⚠️
     esac
 done
