@@ -1,43 +1,133 @@
-[English](#english) | [Українська](#українська) | [Polski](#polski) | [Русский](#русский)
+[Русский](#русский) | [Українська](#українська) | [English](#english) | [Polski](#polski)
+
+---
+
+<a name="русский"></a>
+
+## 🚀 Скрипты для настройки сервера Linux
+
+Добро пожаловать! Этот репозиторий содержит коллекцию Bash-скриптов для упрощения и автоматизации установки и базовой настройки различного ПО на серверах Linux (в основном протестировано на Debian/Ubuntu).
+
+### 🛠️ Ключевые скрипты
+
+*   **[`server_new.sh`](https://github.com/Joy096/server/raw/refs/heads/main/server_new.sh):** Выполняет первоначальную настройку сервера, включая обновление системы, установку Docker, настройку брандмауэра UFW и другие базовые утилиты.
+*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/raw/refs/heads/main/cloudflare_ssl.sh):** Устанавливает `acme.sh` для получения и автообновления SSL-сертификатов Let's Encrypt через Cloudflare DNS. Позволяет интегрировать сертификаты с 3X-UI, Nextcloud (Snap) и AdGuard Home (Snap). *Внимание: Скрипт самоудаляется после выполнения.*
+*   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Устанавливает панель управления прокси-сервисами 3X-UI (форк X-UI).
+*   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Устанавливает сетевой блокировщик рекламы и трекеров AdGuard Home (через Snap).
+*   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Устанавливает VPN-сервер Outline для простого создания и управления VPN-доступом.
+*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Устанавливает популярный торрент-клиент qBittorrent с веб-интерфейсом.
+*   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Устанавливает TorrServer Matroska, позволяющий смотреть торренты онлайн без полной загрузки.
+*   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Устанавливает Jackett - прокси-сервер для работы с API различных торрент-трекеров.
+*   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Устанавливает Lampa – веб-интерфейс для просмотра медиаконтента.
+
+### ▶️ Общее использование
+
+1.  **Загрузите нужный скрипт:**
+    ```bash
+    # Пример с curl:
+    curl -O [ССЫЛКА_НА_RAW_СКРИПТ]
+    # Пример с wget:
+    # wget [ССЫЛКА_НА_RAW_СКРИПТ]
+    ```
+    Замените `[ССЫЛКА_НА_RAW_СКРИПТ]` на прямую ссылку на файл скрипта (например, `https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh`).
+2.  **Сделайте его исполняемым:**
+    ```bash
+    chmod +x ИМЯ_СКРИПТА.sh
+    ```
+3.  **Запустите с правами root:**
+    ```bash
+    sudo ./ИМЯ_СКРИПТА.sh
+    ```
+4.  Следуйте инструкциям на экране, которые выводит скрипт.
+
+### ⚠️ Важные замечания
+
+*   **Права Root:** **Большинство скриптов необходимо запускать с правами суперпользователя (`root` или через `sudo`),** так как они устанавливают ПО и изменяют системные настройки.
+*   **Просмотр перед запуском:** Всегда просматривайте код скрипта перед его выполнением на сервере, особенно при запуске от имени `root`. Убедитесь, что вы понимаете, какие команды он будет выполнять.
+*   **Совместимость:** Скрипты в основном ориентированы на Debian/Ubuntu. Работа на других дистрибутивах не гарантируется. Некоторые скрипты используют Snap.
+*   **Самоудаление:** Скрипт `cloudflare_ssl.sh` удаляет себя после завершения. Сохраните копию, если он понадобится снова.
+*   **Резервные копии:** Перед применением скриптов, особенно `server_new.sh`, рекомендуется сделать резервную копию важных данных или системы.
+*   **"Как есть":** Скрипты предоставляются "как есть", без гарантий. Используйте их на свой страх и риск.
+
+---
+
+<a name="українська"></a>
+
+## 🚀 Скрипти для налаштування сервера Linux
+
+Ласкаво просимо! Цей репозиторій містить колекцію Bash-скриптів для спрощення та автоматизації встановлення та базового налаштування різноманітного ПЗ на серверах Linux (переважно протестовано на Debian/Ubuntu).
+
+### 🛠️ Ключові скрипти
+
+*   **[`server_new.sh`](https://github.com/Joy096/server/raw/refs/heads/main/server_new.sh):** Виконує початкове налаштування сервера, включно з оновленням системи, встановленням Docker, налаштуванням брандмауера UFW та інших базових утиліт.
+*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/raw/refs/heads/main/cloudflare_ssl.sh):** Встановлює `acme.sh` для отримання та автооновлення SSL-сертифікатів Let's Encrypt через Cloudflare DNS. Дозволяє інтегрувати сертифікати з 3X-UI, Nextcloud (Snap) та AdGuard Home (Snap). *Увага: Скрипт самовидаляється після виконання.*
+*   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Встановлює панель керування проксі-сервісами 3X-UI (форк X-UI).
+*   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Встановлює мережевий блокувальник реклами та трекерів AdGuard Home (через Snap).
+*   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Встановлює VPN-сервер Outline для простого створення та керування VPN-доступом.
+*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Встановлює популярний торент-клієнт qBittorrent з веб-інтерфейсом.
+*   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Встановлює TorrServer Matroska, що дозволяє дивитися торенти онлайн без повного завантаження.
+*   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Встановлює Jackett - проксі-сервер для роботи з API різноманітних торент-трекерів.
+*   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Встановлює Lampa – веб-інтерфейс для перегляду медіаконтенту.
+
+### ▶️ Загальне використання
+
+1.  **Завантажте потрібний скрипт:**
+    ```bash
+    # Приклад з curl:
+    curl -O [ПОСИЛАННЯ_НА_RAW_СКРИПТ]
+    # Приклад з wget:
+    # wget [ПОСИЛАННЯ_НА_RAW_СКРИПТ]
+    ```
+    Замініть `[ПОСИЛАННЯ_НА_RAW_СКРИПТ]` на пряме посилання на файл скрипта (наприклад, `https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh`).
+2.  **Зробіть його виконуваним:**
+    ```bash
+    chmod +x ІМЯ_СКРИПТА.sh
+    ```
+3.  **Запустіть з правами root:**
+    ```bash
+    sudo ./ІМЯ_СКРИПТА.sh
+    ```
+4.  Дотримуйтесь інструкцій на екрані, які виводить скрипт.
+
+### ⚠️ Важливі зауваження
+
+*   **Права Root:** **Більшість скриптів необхідно запускати з правами суперкористувача (`root` або через `sudo`),** оскільки вони встановлюють ПЗ та змінюють системні налаштування.
+*   **Перегляд перед запуском:** Завжди переглядайте код скрипта перед його виконанням на сервері, особливо під час запуску від імені `root`. Переконайтеся, що ви розумієте, які команди він виконуватиме.
+*   **Сумісність:** Скрипти переважно орієнтовані на Debian/Ubuntu. Робота на інших дистрибутивах не гарантується. Деякі скрипти використовують Snap.
+*   **Самовидалення:** Скрипт `cloudflare_ssl.sh` видаляє себе після завершення. Збережіть копію, якщо він знадобиться знову.
+*   **Резервні копії:** Перед застосуванням скриптів, особливо `server_new.sh`, рекомендується зробити резервну копію важливих даних або системи.
+*   **"Як є":** Скрипти надаються "як є", без гарантій. Використовуйте їх на свій ризик.
 
 ---
 
 <a name="english"></a>
 
-## 🚀 Joy096/server - Linux Server Utility Scripts (English)
+## 🚀 Linux Server Setup Scripts
 
-Welcome to the `Joy096/server` repository! This is a collection of Bash scripts designed to simplify and automate the installation and basic configuration of various popular services and tools on Linux servers (primarily tested on Debian/Ubuntu).
+Welcome! This repository contains a collection of Bash scripts to simplify and automate the installation and basic configuration of various software on Linux servers (primarily tested on Debian/Ubuntu).
 
-### Included Scripts
+### 🛠️ Key Scripts
 
-*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/blob/main/cloudflare_ssl.sh):**
-    *   Installs `acme.sh` and obtains Let's Encrypt SSL certificates (including wildcards) using Cloudflare DNS API.
-    *   Sets up automatic certificate renewal.
-    *   Provides options to automatically install certificates into 3X-UI, Nextcloud (Snap), and AdGuard Home (Snap).
-    *   *Note:* This script self-deletes after execution for security.
-*   **[`xui_install.sh`](https://github.com/Joy096/server/blob/main/xui_install.sh):**
-    *   Installs the 3X-UI panel (a popular panel for managing proxy services like VLESS, VMess, Trojan).
-*   **[`nextcloud_install.sh`](https://github.com/Joy096/server/blob/main/nextcloud_install.sh):**
-    *   Installs Nextcloud using the official Snap package, providing a self-hosted cloud storage and collaboration platform.
-*   **[`adguard_install.sh`](https://github.com/Joy096/server/blob/main/adguard_install.sh):**
-    *   Installs AdGuard Home using the official Snap package, setting up a network-wide ad & tracker blocker.
-*   **[`docker_install.sh`](https://github.com/Joy096/server/blob/main/docker_install.sh):**
-    *   Installs Docker Engine and Docker Compose, enabling containerized application deployment.
-*   **[`fail2ban_install.sh`](https://github.com/Joy096/server/blob/main/fail2ban_install.sh):**
-    *   Installs and enables Fail2ban with a basic configuration to protect SSH from brute-force attacks.
-*   **[`warp.sh`](https://github.com/Joy096/server/blob/main/warp.sh):**
-    *   Installs and configures Cloudflare WARP, potentially for use as a SOCKS5 proxy or to change the server's outgoing IP address. (Verify script details for exact functionality).
+*   **[`server_new.sh`](https://github.com/Joy096/server/raw/refs/heads/main/server_new.sh):** Performs initial server setup, including system updates, Docker installation, UFW firewall configuration, and other basic utilities.
+*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/raw/refs/heads/main/cloudflare_ssl.sh):** Installs `acme.sh` to obtain and auto-renew Let's Encrypt SSL certificates via Cloudflare DNS. Allows integration with 3X-UI, Nextcloud (Snap), and AdGuard Home (Snap). *Warning: The script self-deletes after execution.*
+*   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Installs the 3X-UI proxy service management panel (a fork of X-UI).
+*   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Installs the network-wide ad and tracker blocker AdGuard Home (via Snap).
+*   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Installs the Outline VPN server for easy creation and management of VPN access.
+*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Installs the popular qBittorrent torrent client with its web UI.
+*   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Installs TorrServer Matroska, allowing online torrent streaming without full download.
+*   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Installs Jackett - a proxy server for working with the APIs of various torrent trackers.
+*   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Installs Lampa – ф web interface for viewing media content.
 
-### General Usage
+### ▶️ General Usage
 
 1.  **Download the desired script:**
     ```bash
     # Example using curl:
-    curl -O https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
+    curl -O [RAW_SCRIPT_LINK]
     # Example using wget:
-    # wget https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
+    # wget [RAW_SCRIPT_LINK]
     ```
-    Replace `SCRIPT_NAME.sh` with the actual script filename (e.g., `docker_install.sh`).
+    Replace `[RAW_SCRIPT_LINK]` with the direct link to the script file (e.g., `https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh`).
 2.  **Make it executable:**
     ```bash
     chmod +x SCRIPT_NAME.sh
@@ -46,184 +136,62 @@ Welcome to the `Joy096/server` repository! This is a collection of Bash scripts 
     ```bash
     sudo ./SCRIPT_NAME.sh
     ```
-4.  Follow any on-screen prompts provided by the script.
+4.  Follow the on-screen instructions provided by the script.
 
 ### ⚠️ Important Notes
 
-*   **Root Privileges:** Most scripts require `root` or `sudo` access to install packages and modify system configurations.
-*   **Review Before Running:** **Always review the script's code before executing it on your server, especially when running as root.** Understand what commands it will run.
-*   **Compatibility:** Scripts are primarily developed and tested on Debian/Ubuntu systems. Compatibility with other distributions may vary. Specific scripts might target Snap package installations (Nextcloud, AdGuard).
-*   **Self-Deletion:** The `cloudflare_ssl.sh` script deletes itself upon completion. Make a copy if you need to reuse it without redownloading. Check other scripts if this behavior is intended elsewhere.
-*   **Backups:** Before running installation scripts that might alter system configurations or install major software, ensure you have adequate backups.
-*   **Use As-Is:** These scripts are provided "as-is" without warranty. Use them at your own risk.
-
----
-
-<a name="українська"></a>
-
-## 🚀 Joy096/server - Утилітні скрипти для сервера Linux (Українська)
-
-Ласкаво просимо до репозиторію `Joy096/server`! Це колекція Bash-скриптів, призначених для спрощення та автоматизації встановлення та базової конфігурації різноманітних популярних сервісів та інструментів на серверах Linux (переважно протестовано на Debian/Ubuntu).
-
-### Наявні скрипти
-
-*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/blob/main/cloudflare_ssl.sh):**
-    *   Встановлює `acme.sh` та отримує SSL-сертифікати Let's Encrypt (включно з wildcard) за допомогою Cloudflare DNS API.
-    *   Налаштовує автоматичне поновлення сертифікатів.
-    *   Надає опції для автоматичного встановлення сертифікатів у 3X-UI, Nextcloud (Snap) та AdGuard Home (Snap).
-    *   *Примітка:* Цей скрипт самовидаляється після виконання для безпеки.
-*   **[`xui_install.sh`](https://github.com/Joy096/server/blob/main/xui_install.sh):**
-    *   Встановлює панель 3X-UI (популярна панель для керування проксі-сервісами, такими як VLESS, VMess, Trojan).
-*   **[`nextcloud_install.sh`](https://github.com/Joy096/server/blob/main/nextcloud_install.sh):**
-    *   Встановлює Nextcloud за допомогою офіційного Snap-пакету, надаючи платформу для власного хмарного сховища та співпраці.
-*   **[`adguard_install.sh`](https://github.com/Joy096/server/blob/main/adguard_install.sh):**
-    *   Встановлює AdGuard Home за допомогою офіційного Snap-пакету, налаштовуючи блокувальник реклами та трекерів для всієї мережі.
-*   **[`docker_install.sh`](https://github.com/Joy096/server/blob/main/docker_install.sh):**
-    *   Встановлює Docker Engine та Docker Compose, що дозволяє розгортати контейнеризовані додатки.
-*   **[`fail2ban_install.sh`](https://github.com/Joy096/server/blob/main/fail2ban_install.sh):**
-    *   Встановлює та вмикає Fail2ban з базовою конфігурацією для захисту SSH від атак перебору (brute-force).
-*   **[`warp.sh`](https://github.com/Joy096/server/blob/main/warp.sh):**
-    *   Встановлює та налаштовує Cloudflare WARP, потенційно для використання як SOCKS5 проксі або для зміни вихідної IP-адреси сервера. (Перевірте деталі скрипта для точної функціональності).
-
-### Загальне використання
-
-1.  **Завантажте потрібний скрипт:**
-    ```bash
-    # Приклад з curl:
-    curl -O https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
-    # Приклад з wget:
-    # wget https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
-    ```
-    Замініть `SCRIPT_NAME.sh` на фактичне ім'я файлу скрипта (наприклад, `docker_install.sh`).
-2.  **Зробіть його виконуваним:**
-    ```bash
-    chmod +x SCRIPT_NAME.sh
-    ```
-3.  **Запустіть з правами root:**
-    ```bash
-    sudo ./SCRIPT_NAME.sh
-    ```
-4.  Дотримуйтесь інструкцій на екрані, які надає скрипт.
-
-### ⚠️ Важливі зауваження
-
-*   **Права Root:** Більшість скриптів вимагають доступу `root` або `sudo` для встановлення пакетів та зміни системних конфігурацій.
-*   **Перегляд перед запуском:** **Завжди переглядайте код скрипта перед його виконанням на сервері, особливо при запуску від імені root.** Розумійте, які команди він буде виконувати.
-*   **Сумісність:** Скрипти переважно розроблені та протестовані на системах Debian/Ubuntu. Сумісність з іншими дистрибутивами може відрізнятися. Деякі скрипти можуть бути орієнтовані на встановлення через Snap (Nextcloud, AdGuard).
-*   **Самовидалення:** Скрипт `cloudflare_ssl.sh` видаляє себе після завершення роботи. Зробіть копію, якщо потрібно використати його повторно без перезавантаження. Перевірте інші скрипти, якщо така поведінка передбачена і для них.
-*   **Резервні копії:** Перед запуском інсталяційних скриптів, які можуть змінити конфігурацію системи або встановити основне програмне забезпечення, переконайтеся, що у вас є відповідні резервні копії.
-*   **Використання "як є":** Ці скрипти надаються "як є" без гарантій. Використовуйте їх на свій ризик.
+*   **Root Privileges:** **Most scripts must be run with superuser privileges (`root` or via `sudo`)** as they install software and modify system settings.
+*   **Review Before Running:** Always review the script's code before executing it on your server, especially when running as `root`. Ensure you understand the commands it will run.
+*   **Compatibility:** Scripts are primarily targeted at Debian/Ubuntu. Functionality on other distributions is not guaranteed. Some scripts use Snap.
+*   **Self-Deletion:** The `cloudflare_ssl.sh` script deletes itself upon completion. Save a copy if you need it again.
+*   **Backups:** Before applying scripts, especially `server_new.sh`, it is recommended to back up important data or the system.
+*   **"As Is":** The scripts are provided "as is" without warranty. Use them at your own risk.
 
 ---
 
 <a name="polski"></a>
 
-## 🚀 Joy096/server - Skrypty narzędziowe dla serwera Linux (Polski)
+## 🚀 Skrypty do konfiguracji serwera Linux
 
-Witamy w repozytorium `Joy096/server`! Jest to kolekcja skryptów Bash stworzonych w celu uproszczenia i automatyzacji instalacji oraz podstawowej konfiguracji różnych popularnych usług i narzędzi na serwerach Linux (głównie testowane na Debian/Ubuntu).
+Witaj! To repozytorium zawiera kolekcję skryptów Bash do uproszczenia i automatyzacji instalacji oraz podstawowej konfiguracji różnego oprogramowania na serwerach Linux (głównie testowane na Debian/Ubuntu).
 
-### Dostępne skrypty
+### 🛠️ Kluczowe skrypty
 
-*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/blob/main/cloudflare_ssl.sh):**
-    *   Instaluje `acme.sh` i uzyskuje certyfikaty SSL Let's Encrypt (w tym wildcard) używając Cloudflare DNS API.
-    *   Konfiguruje automatyczne odnawianie certyfikatów.
-    *   Udostępnia opcje automatycznej instalacji certyfikatów w 3X-UI, Nextcloud (Snap) i AdGuard Home (Snap).
-    *   *Uwaga:* Ten skrypt usuwa się samoczynnie po wykonaniu ze względów bezpieczeństwa.
-*   **[`xui_install.sh`](https://github.com/Joy096/server/blob/main/xui_install.sh):**
-    *   Instaluje panel 3X-UI (popularny panel do zarządzania usługami proxy, takimi jak VLESS, VMess, Trojan).
-*   **[`nextcloud_install.sh`](https://github.com/Joy096/server/blob/main/nextcloud_install.sh):**
-    *   Instaluje Nextcloud przy użyciu oficjalnego pakietu Snap, zapewniając własną platformę do przechowywania danych w chmurze i współpracy.
-*   **[`adguard_install.sh`](https://github.com/Joy096/server/blob/main/adguard_install.sh):**
-    *   Instaluje AdGuard Home przy użyciu oficjalnego pakietu Snap, konfigurując bloker reklam i trackerów dla całej sieci.
-*   **[`docker_install.sh`](https://github.com/Joy096/server/blob/main/docker_install.sh):**
-    *   Instaluje Docker Engine i Docker Compose, umożliwiając wdrażanie aplikacji w kontenerach.
-*   **[`fail2ban_install.sh`](https://github.com/Joy096/server/blob/main/fail2ban_install.sh):**
-    *   Instaluje i włącza Fail2ban z podstawową konfiguracją do ochrony SSH przed atakami typu brute-force.
-*   **[`warp.sh`](https://github.com/Joy096/server/blob/main/warp.sh):**
-    *   Instaluje i konfiguruje Cloudflare WARP, potencjalnie do użytku jako proxy SOCKS5 lub do zmiany wychodzącego adresu IP serwera. (Sprawdź szczegóły skryptu, aby poznać dokładną funkcjonalność).
+*   **[`server_new.sh`](https://github.com/Joy096/server/raw/refs/heads/main/server_new.sh):** Przeprowadza wstępną konfigurację serwera, w tym aktualizację systemu, instalację Dockera, konfigurację zapory UFW i innych podstawowych narzędzi.
+*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/raw/refs/heads/main/cloudflare_ssl.sh):** Instaluje `acme.sh` do uzyskiwania i automatycznego odnawiania certyfikatów SSL Let's Encrypt przez Cloudflare DNS. Umożliwia integrację certyfikatów z 3X-UI, Nextcloud (Snap) i AdGuard Home (Snap). *Uwaga: Skrypt usuwa się samoczynnie po wykonaniu.*
+*   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Instaluje panel zarządzania usługami proxy 3X-UI (fork X-UI).
+*   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Instaluje sieciowy bloker reklam i trackerów AdGuard Home (przez Snap).
+*   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Instaluje serwer VPN Outline do łatwego tworzenia i zarządzania dostępem VPN.
+*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Instaluje popularnego klienta torrent qBittorrent z interfejsem webowym.
+*   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Instaluje TorrServer Matroska, pozwalający oglądać torrenty online bez pełnego pobierania.
+*   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Instaluje Jackett - serwer proxy do pracy z API różnych trackerów torrent.
+*   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Instaluje Lampa – interfejs webowy do przeglądania treści multimedialnych.
 
-### Ogólne użycie
+### ▶️ Ogólne użycie
 
-1.  **Pobierz wybrany skrypt:**
+1.  **Pobierz potrzebny skrypt:**
     ```bash
     # Przykład użycia curl:
-    curl -O https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
+    curl -O [LINK_DO_RAW_SKRYPTU]
     # Przykład użycia wget:
-    # wget https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
+    # wget [LINK_DO_RAW_SKRYPTU]
     ```
-    Zastąp `SCRIPT_NAME.sh` rzeczywistą nazwą pliku skryptu (np. `docker_install.sh`).
+    Zastąp `[LINK_DO_RAW_SKRYPTU]` bezpośrednim linkiem do pliku skryptu (np. `https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh`).
 2.  **Nadaj mu uprawnienia do wykonania:**
     ```bash
-    chmod +x SCRIPT_NAME.sh
+    chmod +x NAZWA_SKRYPTU.sh
     ```
 3.  **Uruchom z uprawnieniami root:**
     ```bash
-    sudo ./SCRIPT_NAME.sh
+    sudo ./NAZWA_SKRYPTU.sh
     ```
-4.  Postępuj zgodnie z komunikatami wyświetlanymi przez skrypt.
+4.  Postępuj zgodnie z instrukcjami wyświetlanymi przez skrypt.
 
 ### ⚠️ Ważne uwagi
 
-*   **Uprawnienia Root:** Większość skryptów wymaga dostępu `root` lub `sudo` do instalowania pakietów i modyfikowania konfiguracji systemu.
-*   **Sprawdź przed uruchomieniem:** **Zawsze przejrzyj kod skryptu przed jego wykonaniem na serwerze, zwłaszcza gdy uruchamiasz go jako root.** Zrozum, jakie polecenia zostaną wykonane.
-*   **Kompatybilność:** Skrypty są głównie tworzone i testowane na systemach Debian/Ubuntu. Kompatybilność z innymi dystrybucjami może być różna. Niektóre skrypty mogą być przeznaczone do instalacji za pomocą pakietów Snap (Nextcloud, AdGuard).
-*   **Samousunięcie:** Skrypt `cloudflare_ssl.sh` usuwa się po zakończeniu działania. Zrób kopię, jeśli potrzebujesz go użyć ponownie bez ponownego pobierania. Sprawdź inne skrypty, jeśli takie zachowanie jest zamierzone również dla nich.
-*   **Kopie zapasowe:** Przed uruchomieniem skryptów instalacyjnych, które mogą zmienić konfigurację systemu lub zainstalować główne oprogramowanie, upewnij się, że posiadasz odpowiednie kopie zapasowe.
-*   **Używaj "tak jak jest":** Te skrypty są dostarczane "tak jak są", bez żadnej gwarancji. Używaj ich na własne ryzyko.
-
----
-
-<a name="русский"></a>
-
-## 🚀 Joy096/server - Скрипты-утилиты для сервера Linux (Русский)
-
-Добро пожаловать в репозиторий `Joy096/server`! Это коллекция Bash-скриптов, предназначенных для упрощения и автоматизации установки и базовой настройки различных популярных сервисов и инструментов на серверах Linux (преимущественно протестировано на Debian/Ubuntu).
-
-### Состав репозитория
-
-*   **[`cloudflare_ssl.sh`](https://github.com/Joy096/server/blob/main/cloudflare_ssl.sh):**
-    *   Устанавливает `acme.sh` и получает SSL-сертификаты Let's Encrypt (включая wildcard) с использованием Cloudflare DNS API.
-    *   Настраивает автоматическое продление сертификатов.
-    *   Предоставляет опции для автоматической установки сертификатов в 3X-UI, Nextcloud (Snap) и AdGuard Home (Snap).
-    *   *Примечание:* Этот скрипт самоудаляется после выполнения в целях безопасности.
-*   **[`xui_install.sh`](https://github.com/Joy096/server/blob/main/xui_install.sh):**
-    *   Устанавливает панель 3X-UI (популярная панель для управления прокси-сервисами, такими как VLESS, VMess, Trojan).
-*   **[`nextcloud_install.sh`](https://github.com/Joy096/server/blob/main/nextcloud_install.sh):**
-    *   Устанавливает Nextcloud с помощью официального Snap-пакета, предоставляя платформу для собственного облачного хранилища и совместной работы.
-*   **[`adguard_install.sh`](https://github.com/Joy096/server/blob/main/adguard_install.sh):**
-    *   Устанавливает AdGuard Home с помощью официального Snap-пакета, настраивая блокировщик рекламы и трекеров для всей сети.
-*   **[`docker_install.sh`](https://github.com/Joy096/server/blob/main/docker_install.sh):**
-    *   Устанавливает Docker Engine и Docker Compose, позволяя разворачивать контейнеризированные приложения.
-*   **[`fail2ban_install.sh`](https://github.com/Joy096/server/blob/main/fail2ban_install.sh):**
-    *   Устанавливает и включает Fail2ban с базовой конфигурацией для защиты SSH от атак перебора (brute-force).
-*   **[`warp.sh`](https://github.com/Joy096/server/blob/main/warp.sh):**
-    *   Устанавливает и настраивает Cloudflare WARP, возможно, для использования в качестве SOCKS5 прокси или для смены исходящего IP-адреса сервера. (Проверьте детали скрипта для точной функциональности).
-
-### Общее использование
-
-1.  **Загрузите нужный скрипт:**
-    ```bash
-    # Пример с curl:
-    curl -O https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
-    # Пример с wget:
-    # wget https://raw.githubusercontent.com/Joy096/server/main/SCRIPT_NAME.sh
-    ```
-    Замените `SCRIPT_NAME.sh` на фактическое имя файла скрипта (например, `docker_install.sh`).
-2.  **Сделайте его исполняемым:**
-    ```bash
-    chmod +x SCRIPT_NAME.sh
-    ```
-3.  **Запустите с правами root:**
-    ```bash
-    sudo ./SCRIPT_NAME.sh
-    ```
-4.  Следуйте инструкциям на экране, которые выводит скрипт.
-
-### ⚠️ Важные замечания
-
-*   **Права Root:** Большинство скриптов требуют доступа `root` или `sudo` для установки пакетов и изменения конфигураций системы.
-*   **Просмотр перед запуском:** **Всегда просматривайте код скрипта перед его выполнением на сервере, особенно при запуске от имени root.** Понимайте, какие команды он будет выполнять.
-*   **Совместимость:** Скрипты в основном разработаны и протестированы на системах Debian/Ubuntu. Совместимость с другими дистрибутивами может отличаться. Некоторые скрипты могут быть ориентированы на установку через Snap (Nextcloud, AdGuard).
-*   **Самоудаление:** Скрипт `cloudflare_ssl.sh` удаляет себя после завершения работы. Сделайте копию, если вам нужно использовать его повторно без повторной загрузки. Проверьте другие скрипты, если такое поведение предусмотрено и для них.
-*   **Резервное копирование:** Перед запуском установочных скриптов, которые могут изменить конфигурацию системы или установить крупное программное обеспечение, убедитесь в наличии актуальных резервных копий.
-*   **Использование "как есть":** Эти скрипты предоставляются "как есть", без каких-либо гарантий. Используйте их на свой страх и риск.
+*   **Uprawnienia Root:** **Większość skryptów musi być uruchamiana z uprawnieniami superużytkownika (`root` lub przez `sudo`),** ponieważ instalują oprogramowanie i modyfikują ustawienia systemowe.
+*   **Przegląd przed uruchomieniem:** Zawsze przeglądaj kod skryptu przed jego wykonaniem na serwerze, zwłaszcza podczas uruchamiania jako `root`. Upewnij się, że rozumiesz, jakie polecenia zostaną wykonane.
+*   **Kompatybilność:** Skrypty są głównie przeznaczone dla systemów Debian/Ubuntu. Działanie na innych dystrybucjach nie jest gwarantowane. Niektóre skrypty używają Snap.
+*   **Samousunięcie:** Skrypt `cloudflare_ssl.sh` usuwa się po zakończeniu. Zachowaj kopię, jeśli będzie ponownie potrzebny.
+*   **Kopie zapasowe:** Przed zastosowaniem skryptów, zwłaszcza `server_new.sh`, zaleca się wykonanie kopii zapasowej ważnych danych lub systemu.
+*   **"Tak jak jest":** Skrypty są dostarczane "tak jak są", bez żadnej gwarancji. Używaj ich na własne ryzyko.
