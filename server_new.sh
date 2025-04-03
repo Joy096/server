@@ -7,23 +7,6 @@ SCRIPT_PATH=$(realpath "$0")
 trap 'rm -f "$SCRIPT_PATH"' EXIT
 
 # Настройка SSH-ключей
-PUBLIC_KEY="ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAiWC+8dirRSGcfd19nbdYVEbS1cIYKhXdJ3hQt3rsLK3HbbPEB178ldqP8nl5wTJr6HaoGX/GST5jyYd1RJTZVGAtR+4kj7Dd/89ROlxKKnCXLFpEGS+X847tRvuf2my/+qZcmj1Vo4A7eIDTcomResInCNYNm0cZTuWX/+8p/J26p/DBKd5NFycVy8ZZBC4PqOIRYzi8YYo7hg3RoefH1A5rXxhAlhiFp3gXHdMtV3fEmD5tXPaVwJjzRfuTzv1+y7iBFqhyuMGMULyV5HogQRVQqHJgYc+PteuhMDzXUic9AUj7N+mObLR9QkSbUwXgScYXFzl6T9Ggk5Pc2Z4mbw== joy096"
-AUTHORIZED_KEYS="$HOME/.ssh/authorized_keys"
-
-if [ ! -f "$AUTHORIZED_KEYS" ]; then
-  mkdir -p "$HOME/.ssh"
-  touch "$AUTHORIZED_KEYS"
-  chmod 600 "$AUTHORIZED_KEYS"
-fi
-
-if ! grep -qF "$PUBLIC_KEY" "$AUTHORIZED_KEYS"; then
-  echo "$PUBLIC_KEY" >> "$AUTHORIZED_KEYS"
-fi
-
-if [ ! -d /root/.ssh ]; then
-  sudo mkdir -p /root/.ssh
-fi
-
 sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
 sudo chown -R root: /root/.ssh/
 
