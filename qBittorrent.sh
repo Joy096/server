@@ -12,33 +12,27 @@ CREDENTIALS_FILE="/etc/qbittorrent-credentials"
 # Функция установки qBittorrent с веб-интерфейсом
 install_qbittorrent() {
     echo ""
-    echo "🔄 Обновление системы..."
+    echo "Обновление системы..." # Убрали 🔄
     export DEBIAN_FRONTEND=noninteractive
     apt update && apt upgrade -y && apt autoremove -y && apt clean
-
     echo ""
-    echo "📦 Установка qBittorrent-nox..."
+    echo "Установка qBittorrent-nox..." # Убрали 📦
     apt install -y qbittorrent-nox mktorrent curl jq
-
     echo ""
-    echo "👤 Создание пользователя qbittorrent..."
+    echo "Создание пользователя qbittorrent..." # Убрали 👤
     useradd -r -m -d /home/qbittorrent -s /usr/sbin/nologin qbittorrent || echo "ℹ️ Пользователь уже существует"
-
     echo ""
-    read -p "🛠  Введите порт для веб-интерфейса (по умолчанию 8080): " WEB_PORT
+    read -p "Введите порт для веб-интерфейса (по умолчанию 8080): " WEB_PORT # Убрали 🛠️
     WEB_PORT=${WEB_PORT:-8080}
     echo "$WEB_PORT" > "$PORT_FILE"
-
-    read -p "🔑 Введите логин (по умолчанию admin): " QB_LOGIN
+    read -p "Введите логин (по умолчанию admin): " QB_LOGIN # Убрали 🔑
     QB_LOGIN=${QB_LOGIN:-admin}
-
-    read -p "🔑 Введите пароль (по умолчанию adminadmin): " QB_PASSWORD
+    read -p "Введите пароль (по умолчанию adminadmin): " QB_PASSWORD # Убрали 🔑
     QB_PASSWORD=${QB_PASSWORD:-adminadmin}
     echo "$QB_LOGIN:$QB_PASSWORD" > "$CREDENTIALS_FILE"
-
     echo ""
-    echo "⚙ Настройка systemd службы..."
-    cat <<EOF > /etc/systemd/system/qbittorrent.service
+    echo "Настройка systemd службы..." # Убрали ⚙️
+    cat << EOF > /etc/systemd/system/qbittorrent.service
 [Unit]
 Description=qBittorrent-nox Service
 After=network.target
@@ -54,47 +48,40 @@ LimitNOFILE=65536
 [Install]
 WantedBy=multi-user.target
 EOF
-
-    echo "🔄 Перезапуск systemd и запуск службы..."
+    echo "Перезапуск systemd и запуск службы..." # Убрали 🔄
     systemctl daemon-reload
     systemctl enable qbittorrent
     systemctl start qbittorrent
-
     echo ""
-    echo "🌐 Открытие порта $WEB_PORT в UFW..."
+    echo "Открытие порта $WEB_PORT в UFW..." # Убрали 🌐
     ufw allow $WEB_PORT/tcp
-
     sleep 5
-
     SERVER_IP=$(curl -s ifconfig.me)
-
     echo ""
-    echo "🔐 Настройка логина и пароля..."
-    
+    echo "Настройка логина и пароля..." # Убрали 🔐
     SESSION_ID=$(curl -s -i -X POST -H "User-Agent: Mozilla/5.0" \
-        "http://localhost:$WEB_PORT/api/v2/auth/login" \
-        --data "username=admin&password=adminadmin" | grep -Fi "set-cookie" | cut -d ' ' -f2 | tr -d '\r')
+      "http://localhost:$WEB_PORT/api/v2/auth/login" \
+      --data "username=admin&password=adminadmin" | grep -Fi "set-cookie" | cut -d ' ' -f2 | tr -d '\r')
 
     if [[ -n "$SESSION_ID" ]]; then
         curl -s -X POST -H "User-Agent: Mozilla/5.0" -H "Cookie: $SESSION_ID" \
-            "http://localhost:$WEB_PORT/api/v2/app/setPreferences" \
-            --data-urlencode "json={\"web_ui_username\":\"$QB_LOGIN\",\"web_ui_password\":\"$QB_PASSWORD\"}"
+          "http://localhost:$WEB_PORT/api/v2/app/setPreferences" \
+          --data-urlencode "json={\"web_ui_username\":\"$QB_LOGIN\",\"web_ui_password\":\"$QB_PASSWORD\"}"
         echo "✅ Логин и пароль успешно изменены."
-        
+
         # Получаем порт для входящих соединений
         INCOMING_PORT=$(curl -s -X GET -H "User-Agent: Mozilla/5.0" -H "Cookie: $SESSION_ID" \
-            "http://localhost:$WEB_PORT/api/v2/app/preferences" | jq -r '.listen_port')
+          "http://localhost:$WEB_PORT/api/v2/app/preferences" | jq -r '.listen_port')
 
         if [[ -n "$INCOMING_PORT" && "$INCOMING_PORT" != "null" ]]; then
             echo "$INCOMING_PORT" > /etc/qbittorrent_incoming_port
             ufw allow "$INCOMING_PORT"/tcp >/dev/null
             ufw allow "$INCOMING_PORT"/udp >/dev/null
             echo ""
-            echo "🌐 Открыт порт для входящих соединений: $INCOMING_PORT"
+            echo "Открыт порт для входящих соединений: $INCOMING_PORT" # Убрали 🌐
         else
-            echo "⚠ Не удалось определить порт для входящих соединений!"
+            echo "⚠️ Не удалось определить порт для входящих соединений!" # Заменили ⚠ на ⚠️
         fi
-
     else
         echo "❌ Ошибка авторизации в qBittorrent API!"
     fi
@@ -102,53 +89,46 @@ EOF
     echo ""
     echo "✅ qBittorrent установлен и запущен."
     echo ""
-    echo "🌍 Веб-интерфейс qBittorrent доступен по адресу: http://$SERVER_IP:$WEB_PORT"
-    echo "🔑 Логин: $QB_LOGIN"
-    echo "🔒 Пароль: $QB_PASSWORD"
+    echo "Веб-интерфейс qBittorrent доступен по адресу: http://$SERVER_IP:$WEB_PORT" # Убрали 🌍
+    echo "Логин: $QB_LOGIN" # Убрали 🔑
+    echo "Пароль: $QB_PASSWORD" # Убрали 🔒
 }
 
 # Функция удаления qBittorrent
 remove_qbittorrent() {
     echo ""
-    echo "🛑 Остановка службы qBittorrent..."
+    echo "Остановка службы qBittorrent..." # Убрали 🛑
     systemctl stop qbittorrent
     systemctl disable qbittorrent
     rm -f /etc/systemd/system/qbittorrent.service
-
-    echo "🗑 Удаление пакетов..."
+    echo "Удаление пакетов..." # Убрали 🗑️
     apt remove --purge -y qbittorrent-nox mktorrent
     apt autoremove -y
-
     echo ""
-    echo "🌐 Закрытие портов в UFW..."
+    echo "Закрытие портов в UFW..." # Убрали 🌐
     if [ -f "/etc/qbittorrent_web_port" ]; then
         WEB_PORT=$(cat /etc/qbittorrent_web_port)
         ufw delete allow "$WEB_PORT"/tcp >/dev/null 2>&1 || echo "ℹ️ Правило уже удалено"
         rm -f /etc/qbittorrent_web_port
     fi
-
     if [ -f "/etc/qbittorrent_incoming_port" ]; then
         INCOMING_PORT=$(cat /etc/qbittorrent_incoming_port)
         ufw delete allow "$INCOMING_PORT"/tcp >/dev/null 2>&1 || echo "ℹ️ Правило уже удалено"
         ufw delete allow "$INCOMING_PORT"/udp >/dev/null 2>&1 || echo "ℹ️ Правило уже удалено"
         rm -f /etc/qbittorrent_incoming_port
     fi
-
-    echo "🗑 Удаление сохраненных данных..."
+    echo "Удаление сохраненных данных..." # Убрали 🗑️
     rm -f "$CREDENTIALS_FILE"
     rm -rf ~/torrents
-
-    echo "👤 Удаление пользователя qbittorrent и его домашней директории..."
+    echo "Удаление пользователя qbittorrent и его домашней директории..." # Убрали 👤
     userdel -r qbittorrent 2>/dev/null || echo "ℹ️ Пользователь qbittorrent не найден или уже удалён."
-
     echo "✅ qBittorrent успешно удалён."
 }
 
 # Функция создания торрента и запуска раздачи
 create_torrent() {
     echo ""
-    read -p "📂 Введите путь к файлу или папке для раздачи: " FILE_PATH
-
+    read -p "Введите путь к файлу или папке для раздачи: " FILE_PATH # Убрали 📂
     if [ ! -e "$FILE_PATH" ]; then
         echo "❌ Ошибка: файл или папка не найдены!"
         return
@@ -162,32 +142,27 @@ create_torrent() {
     FILE_NAME=$(basename "$FILE_PATH")
     DEST_PATH="$DOWNLOADS_DIR/$FILE_NAME"
     COUNTER=1
-
     while [ -e "$DEST_PATH" ]; do
         EXTENSION=""
         BASE_NAME="$FILE_NAME"
-
         # Разделяем имя и расширение, если оно есть
         if [[ "$FILE_NAME" == *.* ]]; then
-            EXTENSION=".${FILE_NAME##*.}"
-            BASE_NAME="${FILE_NAME%.*}"
+             EXTENSION=".${FILE_NAME##*.}"
+             BASE_NAME="${FILE_NAME%.*}"
         fi
-
         DEST_PATH="$DOWNLOADS_DIR/${BASE_NAME}_$COUNTER$EXTENSION"
         ((COUNTER++))
     done
 
     # Перемещение файла/папки в DOWNLOADS_DIR
     mv "$FILE_PATH" "$DEST_PATH"
-    
     # Проверка успешности перемещения
     if [ $? -ne 0 ]; then
         echo "❌ Ошибка перемещения файла/папки!"
         return
     fi
-
     FILE_PATH="$DEST_PATH"
-    echo "📂 Файл/папка перемещены в: $FILE_PATH"
+    echo "Файл/папка перемещены в: $FILE_PATH" # Убрали 📂
 
     # Создание папки для .torrent файлов, если ее нет
     TORRENT_DIR="/home/qbittorrent/torrent_files"
@@ -215,24 +190,21 @@ create_torrent() {
         sudo chmod -R 755 "$FILE_PATH"
     fi
 
-    read -p "🔒 Сделать торрент приватным? (y/n): " PRIVATE_TORRENT
+    read -p "Сделать торрент приватным? (y/n): " PRIVATE_TORRENT # Убрали 🔒
     PRIVATE_FLAG=""
     if [[ "$PRIVATE_TORRENT" == "y" ]]; then
         PRIVATE_FLAG="-p"
-
         # Создание .torrent файла
         TRACKERS="udp://tracker.openbittorrent.com:80/announce,udp://tracker.opentrackr.org:1337/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.tiny-pears.com:6969/announce,udp://tracker.coppersurfer.tk:6969/announce"
         mktorrent -a "$TRACKERS" $PRIVATE_FLAG -o "$TORRENT_PATH" "$FILE_PATH" >/dev/null 2>&1
-
         mkdir -p ~/torrents
         cp "$TORRENT_PATH" ~/torrents/"$TORRENT_NAME"
-
         echo ""
-        echo "⚠️  Для работы с приватным торрентом используйте только файл .torrent!"
-        echo "⚠️  Magnet-ссылки, хеш и другие методы работать не будут!"
-        echo "📂 Файл $TORRENT_NAME скопирован в папку ~/torrents/"
+        echo "⚠️ Для работы с приватным торрентом используйте только файл .torrent!"
+        echo "⚠️ Magnet-ссылки, хеш и другие методы работать не будут!"
+        echo "Файл $TORRENT_NAME скопирован в папку ~/torrents/" # Убрали 📂
     else
-       # Создание .torrent файла
+        # Создание .torrent файла
         TRACKERS="udp://tracker.openbittorrent.com:80/announce,udp://tracker.opentrackr.org:1337/announce,udp://tracker.torrent.eu.org:451/announce,udp://tracker.tiny-pears.com:6969/announce,udp://tracker.coppersurfer.tk:6969/announce"
         mktorrent -a "$TRACKERS" $PRIVATE_FLAG -o "$TORRENT_PATH" "$FILE_PATH" >/dev/null 2>&1
     fi
@@ -255,16 +227,15 @@ create_torrent() {
     SERVER_IP=$(curl -s ifconfig.me)
 
     SESSION_ID=$(curl -s -i -X POST -H "User-Agent: Mozilla/5.0" \
-        "http://localhost:$WEB_PORT/api/v2/auth/login" \
-        --data "username=$QB_LOGIN&password=$QB_PASSWORD" | grep -Fi "set-cookie" | cut -d ' ' -f2 | tr -d '\r')
+      "http://localhost:$WEB_PORT/api/v2/auth/login" \
+      --data "username=$QB_LOGIN&password=$QB_PASSWORD" | grep -Fi "set-cookie" | cut -d ' ' -f2 | tr -d '\r')
 
     if [[ -n "$SESSION_ID" ]]; then
         curl -s -X POST -H "User-Agent: Mozilla/5.0" -H "Cookie: $SESSION_ID" \
-            "http://localhost:$WEB_PORT/api/v2/torrents/add" \
-            --cookie "$SESSION_ID" \
-            -F "torrents=@$TORRENT_PATH" \
-            -F "savepath=$DOWNLOADS_DIR" >/dev/null 2>&1
-
+          "http://localhost:$WEB_PORT/api/v2/torrents/add" \
+          --cookie "$SESSION_ID" \
+          -F "torrents=@$TORRENT_PATH" \
+          -F "savepath=$DOWNLOADS_DIR" >/dev/null 2>&1
         echo ""
         echo "✅ Торрент $TORRENT_NAME создан и добавлен в раздачу!"
     else
@@ -275,7 +246,6 @@ create_torrent() {
 # Функция показа адреса веб-интерфейса
 show_server_address() {
     SERVER_IP=$(curl -s ifconfig.me)
-    
     if [ -f "$PORT_FILE" ]; then
         WEB_PORT=$(cat "$PORT_FILE")
     else
@@ -291,29 +261,28 @@ show_server_address() {
     fi
 
     echo ""
-    echo "🌍 Веб-интерфейс qBittorrent доступен по адресу: http://$SERVER_IP:$WEB_PORT"
-    echo "🔑 Логин: $QB_LOGIN"
-    echo "🔒 Пароль: $QB_PASSWORD"
+    echo "Веб-интерфейс qBittorrent доступен по адресу: http://$SERVER_IP:$WEB_PORT" # Убрали 🌍
+    echo "Логин: $QB_LOGIN" # Убрали 🔑
+    echo "Пароль: $QB_PASSWORD" # Убрали 🔒
 }
 
 # Главное меню
 while true; do
     echo ""
-    echo "📌 Выберите действие:"
-    echo "1️⃣  Установить qBittorrent"
-    echo "2️⃣  Удалить qBittorrent"
-    echo "3️⃣  Показать адрес сервера"
-    echo "4️⃣  Создать торрент и запустить раздачу"
-    echo "0️⃣  Выход"
+    echo "Выберите действие:" # Убрали 📌
+    echo "1. Установить qBittorrent" # Убрали 1️⃣
+    echo "2. Удалить qBittorrent" # Убрали 2️⃣
+    echo "3. Показать адрес сервера" # Убрали 3️⃣
+    echo "4. Создать торрент и запустить раздачу" # Убрали 4️⃣
+    echo "0. Выход" # Убрали 0️⃣
     echo "=============================="
-    read -p "👉 Введите номер действия: " choice
-
+    read -p "Введите номер действия: " choice # Убрали 👉
     case $choice in
         1) install_qbittorrent ;;
         2) remove_qbittorrent ;;
         3) show_server_address ;;
         4) create_torrent ;;
-        0) echo "👋 Выход..."; echo ""; exit ;;
+        0) echo "Выход..."; echo ""; exit ;; # Убрали 👋
         *) echo "❌ Неверный ввод, попробуйте снова." ;;
     esac
 done
