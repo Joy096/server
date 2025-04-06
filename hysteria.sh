@@ -4,6 +4,12 @@
 # Скрипт управления сервером Hysteria v2 на Ubuntu 24/Debian 12+
 # ==============================================================================
 
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
 # --- Глобальные Константы ---
 HYSTERIA_BIN_PATH="/usr/local/bin/hysteria"        # Путь к бинарному файлу Hysteria
 HYSTERIA_CONFIG_DIR="/etc/hysteria"                # Директория конфигурации Hysteria
