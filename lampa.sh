@@ -194,7 +194,7 @@ EOF
     echo ""
     echo "Добавление задачи автообновления в cron (ежедневно в 3:00)..."
     ( crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; \
-      echo "0 3 * * * curl -sL '$GITHUB_SCRIPT_URL' | bash >> '$LOG_FILE' 2>&1 $CRON_MARKER" ) | crontab - || { echo "❌ ОШИБКА: Не удалось добавить задачу в cron."; }
+      echo "0 3 * * * curl -sL '$GITHUB_SCRIPT_URL' | bash > '$LOG_FILE' $CRON_MARKER" ) | crontab - || { echo "❌ ОШИБКА: Не удалось добавить задачу в cron."; }
     echo "✅ Задача Cron добавлена."
 
     # Финальное сообщение
