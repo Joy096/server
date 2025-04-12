@@ -170,6 +170,16 @@ install_cert_nextcloud() {
     CERT_DIR="/root/my_cert/${CF_Domain}"
     NEXTCLOUD_CERT_DIR="/var/snap/nextcloud/current/certs/custom/"
 
+    # Создаем директорию для сертификатов Nextcloud, если она не существует
+    if [[ ! -d "${NEXTCLOUD_CERT_DIR}" ]]; then
+        LOGI "Создаем директорию ${NEXTCLOUD_CERT_DIR}..."
+        mkdir -p "${NEXTCLOUD_CERT_DIR}"
+        if [[ $? -ne 0 ]]; then
+            LOGE "Ошибка создания директории ${NEXTCLOUD_CERT_DIR} ❌"
+            return 1
+        fi
+    fi
+
     if [[ ! -f "${CERT_DIR}/cert.pem" || ! -f "${CERT_DIR}/private.key" || ! -f "${CERT_DIR}/fullchain.pem" ]]; then
         LOGE "Сертификаты не найдены в ${CERT_DIR}, сначала выпустите их! ❌"
         return
