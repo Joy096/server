@@ -2006,6 +2006,14 @@ restore_from_migration_archive() {
         if [ -n "$first_restored_id" ]; then
             msg "Загрузка конфигурации первого восстановленного сервера ($first_restored_id) как активного..."
             if ! load_server_config "$first_restored_id"; then
+                  msg "Попытка запуска активного сервера '$first_restored_id'..."
+                if start_server; then # start_server использует глобальные переменные активного сервера
+                    msg "Сервер '$first_restored_id' успешно запущен."
+                else
+                    warning "Не удалось автоматически запустить сервер '$first_restored_id'."
+                    warning "Попробуйте запустить его вручную через опцию 4 главного меню."
+                fi
+            else
                  warning "Не удалось автоматически активировать сервер '$first_restored_id'."
             fi
         fi
