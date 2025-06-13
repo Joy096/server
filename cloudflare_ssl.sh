@@ -144,26 +144,26 @@ sync_certificates() {
         return
     fi
     
-    # Пытаемся автоматически определить домен
     local domain
-    domain=$(ls -t "${CERT_BASE_DIR}" | head -n 1) # Берем последний измененный домен
+    domain=$(ls -t "${CERT_BASE_DIR}" | head -n 1)
 
     read -p "Введите домен для синхронизации [${domain}]: " input_domain
-    domain=${input_domain:-$domain} # Используем введенный домен или предложенный по умолчанию
+    domain=${input_domain:-$domain}
 
     if [[ -z "$domain" || ! -d "${CERT_BASE_DIR}/${domain}" ]]; then
         LOGE "Домен не найден. Убедитесь, что сертификат для этого домена был выпущен."
         return
     fi
     
-    # 1. Пересоздаем hook, чтобы он учел новые установленные приложения
+    # 1. Пересоздаем hook
     create_renew_hook "$domain"
     
-    # 2. Перерегистрируем hook в acme.sh, напрямую обновляя конфигурацию
-    LOGD "Обновляем конфигурацию acme.sh для домена ${domain}..."
-    /root/.acme.sh/acme.sh --home /root/.acme.sh -d "$domain" --_saveaccountconf "Le_RenewHook='${HOOK_SCRIPT_PATH}'" >/dev/null 2>&1
+    # 2. Перерегистрируем hook, указывая, что работаем с ECC-сертификатом
+    LOGD "Обновляем конфигурацию acme.sh для ECC-сертификата домена ${domain}..."
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: добавлен флаг --ecc ---
+    /root/.acme.sh/acme.sh --home /root/.acme.sh -d "$domain" --ecc --_saveaccountconf "Le_RenewHook='${HOOK_SCRIPT_PATH}'" >/dev/null 2>&1
     
-    # 3. Запускаем hook немедленно, чтобы установить сертификаты в новые приложения
+    # 3. Запускаем hook немедленно
     LOGI "Запускаем развертывание сертификата для ${domain}..."
     "${HOOK_SCRIPT_PATH}" "$domain"
     
