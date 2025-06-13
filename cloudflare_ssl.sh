@@ -144,17 +144,24 @@ sync_certificates() {
         return
     fi
     
-    read -p "Введите домен для синхронизации: " domain
+    # Пытаемся автоматически определить домен
+    local domain
+    domain=$(ls -t "${CERT_BASE_DIR}" | head -n 1) # Берем последний измененный домен
+
+    read -p "Введите домен для синхронизации [${domain}]: " input_domain
+    domain=${input_domain:-$domain} # Используем введенный домен или предложенный по умолчанию
+
     if [[ -z "$domain" || ! -d "${CERT_BASE_DIR}/${domain}" ]]; then
-        LOGE "Домен не найден. Убедитесь, что вы правильно ввели имя домена."
+        LOGE "Домен не найден. Убедитесь, что сертификат для этого домена был выпущен."
         return
     fi
     
     # 1. Пересоздаем hook, чтобы он учел новые установленные приложения
     create_renew_hook "$domain"
     
-    # 2. Перерегистрируем hook в acme.sh на всякий случай
-    ~/.acme.sh/acme.sh --renew-hook "${HOOK_SCRIPT_PATH}" -d "$domain"
+    # 2. Перерегистрируем hook в acme.sh, напрямую обновляя конфигурацию
+    LOGD "Обновляем конфигурацию acme.sh для домена ${domain}..."
+    /root/.acme.sh/acme.sh --home /root/.acme.sh -d "$domain" --_saveaccountconf "Le_RenewHook='${HOOK_SCRIPT_PATH}'" >/dev/null 2>&1
     
     # 3. Запускаем hook немедленно, чтобы установить сертификаты в новые приложения
     LOGI "Запускаем развертывание сертификата для ${domain}..."
