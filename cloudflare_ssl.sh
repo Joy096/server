@@ -155,15 +155,26 @@ sync_certificates() {
         return
     fi
     
-    # 1. Пересоздаем hook
+    # 1. Пересоздаем hook-скрипт
     create_renew_hook "$domain"
     
-    # 2. Перерегистрируем hook, указывая, что работаем с ECC-сертификатом
-    LOGD "Обновляем конфигурацию acme.sh для ECC-сертификата домена ${domain}..."
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: добавлен флаг --ecc ---
-    /root/.acme.sh/acme.sh --home /root/.acme.sh -d "$domain" --ecc --_saveaccountconf "Le_RenewHook='${HOOK_SCRIPT_PATH}'" >/dev/null 2>&1
+    # 2. Перевыпускаем сертификат, чтобы принудительно обновить его конфигурацию
+    # acme.sh не будет запрашивать новый сертификат, если текущий валиден,
+    # но он перезапишет конфигурацию домена новыми параметрами.
+    LOGI "Обновляем конфигурацию acme.sh для домена ${domain}..."
+    # Используем существующие учетные данные Cloudflare, сохраненные в acme.sh
+    ~/.acme.sh/acme.sh --issue --dns dns_cf \
+        -d "${domain}" \
+        -d "*.${domain}" \
+        --ecc \
+        --renew-hook "${HOOK_SCRIPT_PATH}" --log
     
-    # 3. Запускаем hook немедленно
+    if [[ $? -ne 0 ]]; then
+        LOGE "Произошла ошибка при обновлении конфигурации сертификата."
+        return
+    fi
+
+    # 3. Запускаем hook немедленно, чтобы установить сертификаты
     LOGI "Запускаем развертывание сертификата для ${domain}..."
     "${HOOK_SCRIPT_PATH}" "$domain"
     
