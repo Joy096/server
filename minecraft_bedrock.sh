@@ -849,9 +849,10 @@ set_property() {
     return 0
 }
 
-# Подменю настройки сервера
+# --- Новые функции настройки по разделам, в стиле игры ---
+
+# Подменю настройки сервера (точка входа)
 configure_menu() {
-    # Проверяем, установлен ли активный сервер перед входом в меню
     if ! is_server_installed; then
         error "Сервер (ID: ${ACTIVE_SERVER_ID:-N/A}) не установлен. Сначала установите его."
         return 1
@@ -860,236 +861,256 @@ configure_menu() {
     while true; do
         echo ""
         echo "--- Меню Настройки Сервера (ID: $ACTIVE_SERVER_ID) ---"
-        echo "1. Настроить 'server.properties' (требует перезапуска)"
-        echo "2. Настроить Игровые Правила (Gamerules) (применяются на лету)"
+        echo "1. ⚙️ Общие (Режим игры, Сложность, Название)"
+        echo "2. 📜 Дополнительно (Ключ генерации, Настройки мира)"
+        echo "3. 🌐 Игра по сети (PvP, Белый список, Доступ)"
+        echo "4. 🛠️ Читы (Команды, Правила игры)"
         echo "0. Назад в главное меню"
-        echo "--------------------------------------------"
+        echo "--------------------------------------------------------"
 
         local config_choice
-        read -p "Выберите опцию настройки: " config_choice
+        read -p "Выберите раздел для настройки: " config_choice
 
         case $config_choice in
-            1)
-                configure_server_properties # Вызываем функцию для server.properties
-                ;;
-            2)
-                configure_gamerules # Вызываем функцию для gamerules
-                ;;
-            0)
-                return 0 # Выход из подменю
-                ;;
-            *)
-                msg "Неверная опция."
-                ;;
+            1) configure_general_settings ;;
+            2) configure_advanced_settings ;;
+            3) configure_network_settings ;;
+            4) configure_cheats_settings ;;
+            0) return 0 ;;
+            *) msg "Неверная опция." ;;
         esac
-        # Пауза перед повторным показом меню подраздела, если не вышли
+
         if [[ "$config_choice" != "0" ]]; then
              read -p "Нажмите Enter для возврата в меню настроек..." DUMMY_VAR
         fi
     done
 }
 
-# Настройка файла server.properties (для активного сервера)
-configure_server_properties() {
-    msg "--- Настройка 'server.properties' (ID: $ACTIVE_SERVER_ID) ---"
-    # Содержит только логику для server.properties
-
-    if ! is_server_installed; then error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен."; return 1; fi
-
-    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
-    local GEN_CONFIRM server_pid current_val new_val key desc valid_options is_valid RESTART_CONFIRM
-
-    # --- Проверка и генерация server.properties ---
-    if [ ! -f "$CONFIG_FILE" ]; then
-        warning "Файл конфигурации '$CONFIG_FILE' не найден!"
-        read -p "Запустить сервер '$SERVICE_NAME' на 10 сек для генерации? (yes/no): " GEN_CONFIRM
-        if [[ "$GEN_CONFIRM" == "yes" ]]; then
-            msg "Запускаю сервер для генерации конфига..."; local started_via_systemd=false
-            if sudo systemctl cat "$SERVICE_NAME" &>/dev/null ; then if ! sudo systemctl start "$SERVICE_NAME"; then warning "Не удалось запустить через systemd, пробую напрямую."; else started_via_systemd=true; fi; fi
-            if [ "$started_via_systemd" = false ]; then if ! sudo -u "$SERVER_USER" bash -c "cd \"$DEFAULT_INSTALL_DIR\" && LD_LIBRARY_PATH=. ./bedrock_server &> /dev/null &"; then error "Не удалось запустить временный процесс bedrock_server."; return 1; fi; server_pid=$!; msg "Ждем 10 секунд (PID: $server_pid)..."; sleep 10; msg "Останавливаю временный запуск (PID: $server_pid)..."; if kill -0 $server_pid 2>/dev/null; then sudo kill $server_pid; sleep 2; else warning "Процесс (PID: $server_pid) уже не существует."; fi; else msg "Ждем 10 секунд..."; sleep 10; msg "Останавливаю временный запуск через systemd..."; sudo systemctl stop "$SERVICE_NAME" || warning "Не удалось остановить временный сервис."; fi
-            if [ ! -f "$CONFIG_FILE" ]; then error "Файл '$CONFIG_FILE' все равно не появился."; return 1; fi
-            msg "Файл '$CONFIG_FILE' сгенерирован. Меняем владельца..."; if ! sudo chown "$SERVER_USER":"$SERVER_USER" "$CONFIG_FILE"; then warning "Не удалось изменить владельца $CONFIG_FILE"; fi
-        else error "Отменено. Файл '$CONFIG_FILE' не найден."; return 1; fi
-    fi
-
-    msg "Читаю/изменяю настройки из $CONFIG_FILE..."
-    msg "(Нажмите Enter, чтобы оставить текущее значение)"
-
-    # --- Настройки Мира (server.properties) ---
-    echo "" && msg "*** Настройки Мира (server.properties) ***"
-
-    # server-name
-    echo "" && echo "-- Имя сервера --"; echo "Это имя будет отображаться в списке серверов в игре."
-    key="server-name"; desc="Имя сервера"; current_val=$(get_property "$key" "$CONFIG_FILE" "My Bedrock Server");
-    read -p "$desc [$current_val]: " new_val; set_property "$key" "${new_val:-$current_val}" "$CONFIG_FILE"
-
-    # gamemode
-    echo "" && echo "-- Режим игры по умолчанию --"; echo "Определяет режим для игроков, подключающихся впервые."; echo " 'survival' - выживание, 'creative' - творчество, 'adventure' - приключение (для карт)."
-    key="gamemode"; desc="Режим игры"; current_val=$(get_property "$key" "$CONFIG_FILE" "survival"); valid_options=("survival" "creative" "adventure");
-    while true; do read -p "$desc (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do [[ "$new_val" == "$option" ]] && { is_valid=1; break; } done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done; set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # difficulty
-    echo "" && echo "-- Сложность игры --"; echo "Влияет на урон от мобов, скорость потери голода и поведение мобов."; echo " 'peaceful' - мирный (нет врагов, голод не тратится), 'easy' - легко, 'normal' - нормально, 'hard' - сложно."
-    key="difficulty"; desc="Сложность"; current_val=$(get_property "$key" "$CONFIG_FILE" "easy"); valid_options=("peaceful" "easy" "normal" "hard");
-    while true; do read -p "$desc (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do [[ "$new_val" == "$option" ]] && { is_valid=1; break; } done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done; set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # level-seed
-    echo "" && echo "-- Сид (зерно) мира --"; echo "Определяет генерацию мира. Оставьте пустым для случайной генерации."; echo "Если хотите воссоздать конкретный мир, введите его сид здесь."
-    key="level-seed"; desc="Сид мира"; current_val=$(get_property "$key" "$CONFIG_FILE" "");
-    read -p "$desc (пусто = случайно) [$current_val]: " new_val; set_property "$key" "${new_val:-$current_val}" "$CONFIG_FILE"
-
-    # allow-cheats
-    echo "" && echo "-- Разрешить чит-команды --"; echo "Включает возможность использовать команды типа /give, /tp, /gamemode и т.д."; echo "Также НЕОБХОДИМО установить 'true' для работы Игровых Правил (/gamerule)."; echo "(Изменение этого параметра требует перезапуска сервера)"
-    key="allow-cheats"; desc="Разрешить читы"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
-    while true; do read -p "$desc (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do [[ "$new_val" == "$option" ]] && { is_valid=1; break; } done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done; set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # pvp
-    echo "" && echo "-- Разрешить PvP (Игрок против Игрока) --"; echo "Если 'true', игроки смогут атаковать друг друга."; echo "Если 'false', игроки не смогут наносить урон друг другу (рекомендуется для кооперативной игры)."
-    key="pvp"; desc="Разрешить PvP"; current_val=$(get_property "$key" "$CONFIG_FILE" "true"); valid_options=("true" "false");
-    while true; do read -p "$desc (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do [[ "$new_val" == "$option" ]] && { is_valid=1; break; } done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done; set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # white-list
-    echo "" && echo "-- Включить белый список --"; echo "Если 'true', на сервер смогут зайти только игроки, добавленные в список ('Управление игроками' -> 'Управление белым списком')."; echo "Настоятельно рекомендуется 'true' для приватных серверов."
-    key="white-list"; desc="Включить белый список"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
-    while true; do read -p "$desc (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do [[ "$new_val" == "$option" ]] && { is_valid=1; break; } done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done; set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # --- Конец настроек server.properties ---
-
-    msg "Обновление владельца файла конфигурации '$CONFIG_FILE'..."
-    if ! sudo chown "$SERVER_USER":"$SERVER_USER" "$CONFIG_FILE"; then warning "Не удалось изменить владельца $CONFIG_FILE"; fi
-
-    msg "Настройка 'server.properties' завершена."
-    read -p "Перезапустить сервер '$SERVICE_NAME' для применения этих изменений? (yes/no): " RESTART_CONFIRM
-    if [[ "$RESTART_CONFIRM" == "yes" ]]; then
-        restart_server
-    else
-        msg "Сервер не будет перезапущен сейчас."
-        msg "Изменения в 'server.properties' вступят в силу после следующего перезапуска."
-    fi
-    return 0
-}
-
-# Настройка Игровых Правил (gamerules) (для активного сервера)
-configure_gamerules() {
-    msg "--- Настройка Игровых Правил (ID: $ACTIVE_SERVER_ID) ---"
-    msg "Изменения применяются 'на лету' к запущенному серверу."
-
-    # Проверяем, установлен ли сервер, на всякий случай
-    if ! is_server_installed; then error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен."; return 1; fi
-
-    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties" # Нужен для проверки allow-cheats
-    local allow_cheats_enabled=$(get_property "allow-cheats" "$CONFIG_FILE" "false")
-    local screen_name=${SERVICE_NAME%.service} # Имя screen сессии
-
-    # Проверка allow-cheats
-    if [[ "$allow_cheats_enabled" != "true" ]]; then
-        error "Чит-команды ВЫКЛЮЧЕНЫ (allow-cheats=false в '$CONFIG_FILE')."
-        error "Настройка Игровых Правил невозможна."
-        error "Сначала включите читы через Меню Настройки -> 'server.properties' и перезапустите сервер."
-        return 1
-    fi
-
-    # Проверка, запущен ли сервер
-    local server_is_active=false
-    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-         server_is_active=true
-         msg "Сервер '$SERVICE_NAME' активен. Команды будут отправлены в консоль '$screen_name'."
-    else
-         error "Сервер '$SERVICE_NAME' НЕ активен."
-         error "Невозможно отправить команды для изменения Игровых Правил."
-         error "Запустите сервер (Главное меню -> Управление -> Запустить) и попробуйте снова."
-         return 1
-    fi
-
-    # Вспомогательная функция для отправки команды (без начального слэша и в нижнем регистре!)
-    send_gamerule_command() {
-        local rule_name_lower=$(echo "$1" | tr '[:upper:]' '[:lower:]') # Приводим имя правила к нижнему регистру
-        local rule_state="$2"
-        local rule_cmd="gamerule $rule_name_lower $rule_state" # Формируем команду
-        msg ">>> Попытка установки '$rule_name_lower' в '$rule_state'..."
-
-        # Используем \015 для Enter
-        if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "$rule_cmd"$'\015'; then
-            msg "Команда '$rule_cmd' отправлена."
-            sleep 1 # Пауза для обработки сервером
-        else
-            warning "Не удалось отправить команду '$rule_cmd' в screen '$screen_name'."
-            warning "Проверьте логи сервера ('journalctl -u $SERVICE_NAME') или консоль ('screen -r $screen_name')."
-        fi
-    }
-
-    # --- Настройка конкретных правил ---
-
-    # keepInventory
-    echo "" && echo "-- Сохранять инвентарь после смерти (keepInventory) --"; echo "Если 'yes', игроки не теряют вещи/опыт при смерти."
-    local keepinv_choice keepinv_state=""
-    read -p "Сохранять инвентарь? (yes/no): " keepinv_choice
-    if [[ "$keepinv_choice" == "yes" || "$keepinv_choice" == "y" ]]; then keepinv_state="true"; fi
-    if [[ "$keepinv_choice" == "no" || "$keepinv_choice" == "n" ]]; then keepinv_state="false"; fi
-    if [[ -n "$keepinv_state" ]]; then
-        send_gamerule_command "keepinventory" "$keepinv_state" # Используем нижний регистр
-    else
-        warning "Ввод некорректен, keepinventory пропущено."
-    fi
-
-    # showCoordinates
-    echo "" && echo "-- Показывать координаты (showCoordinates) --"; echo "Если 'yes', в углу экрана будут отображаться X, Y, Z."
-    local showcoords_choice showcoords_state=""
-    read -p "Показывать координаты? (yes/no): " showcoords_choice
-    if [[ "$showcoords_choice" == "yes" || "$showcoords_choice" == "y" ]]; then showcoords_state="true"; fi
-    if [[ "$showcoords_choice" == "no" || "$showcoords_choice" == "n" ]]; then showcoords_state="false"; fi
-    if [[ -n "$showcoords_state" ]]; then
-        send_gamerule_command "showcoordinates" "$showcoords_state" # Используем нижний регистр
-    else
-        warning "Ввод некорректен, showcoordinates пропущено."
-    fi
-
-    # doDaylightCycle
-    echo "" && echo "-- Остановить смену дня и ночи (doDaylightCycle) --"; echo "Если 'yes', время остановится."; echo "Если 'no', время пойдет как обычно."
-    local daylight_choice daylight_state=""
-    read -p "Остановить цикл дня/ночи? (yes/no): " daylight_choice
-    # Инвертируем логику для команды: yes -> false, no -> true
-    if [[ "$daylight_choice" == "yes" || "$daylight_choice" == "y" ]]; then daylight_state="false"; fi
-    if [[ "$daylight_choice" == "no" || "$daylight_choice" == "n" ]]; then daylight_state="true"; fi
-    if [[ -n "$daylight_state" ]]; then
-        send_gamerule_command "dodaylightcycle" "$daylight_state" # Используем нижний регистр
-    else
-        warning "Ввод некорректен, dodaylightcycle пропущено."
-    fi
-    if [[ "$daylight_state" == "false" ]]; then warning "Цикл остановлен. Установите нужное время командой: time set <day/night/etc> в консоли сервера ('screen -r $screen_name')."; fi
-
-    msg "Настройка Игровых Правил завершена."
-    # Перезапуск не нужен
-    return 0 # Успешное завершение
-}
-
-# --- Функции Управления Игроками (для активного сервера) ---
-
-# Включение/отключение белого списка (в server.properties)
-toggle_whitelist() {
-    msg "--- Управление режимом белого списка (ID: $ACTIVE_SERVER_ID) ---"
-    if ! is_server_installed; then error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен."; return 1; fi
-
+# 1. Настройка раздела "Общие"
+configure_general_settings() {
+    msg "--- ⚙️ Настройка: Общие ---"
     local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
     if [ ! -f "$CONFIG_FILE" ]; then error "Файл '$CONFIG_FILE' не найден."; return 1; fi
 
-    local current_state=$(get_property "white-list" "$CONFIG_FILE" "false")
-    echo "Текущее состояние белого списка: $current_state"
-    echo "1. Включить (только разрешенные игроки)"; echo "2. Отключить (все игроки)"
-    local choice; read -p "Выберите (1-2): " choice
-    local new_state=""
-    case $choice in 1) new_state="true" ;; 2) new_state="false" ;; *) msg "Неверный выбор."; return 1 ;; esac
+    local key current_val new_val valid_options is_valid
 
-    if [ "$current_state" == "$new_state" ]; then msg "Состояние не изменилось."; return 0; fi
+    # Название мира (server-name)
+    echo "" && echo "-- Название мира --"
+    key="server-name"; current_val=$(get_property "$key" "$CONFIG_FILE" "Мой мир");
+    read -p "Название [$current_val]: " new_val; set_property "$key" "${new_val:-$current_val}" "$CONFIG_FILE"
 
-    # Используем set_property для изменения файла
-    if ! set_property "white-list" "$new_state" "$CONFIG_FILE"; then
-        error "Не удалось изменить настройку white-list в '$CONFIG_FILE'."
-        return 1
+    # Режим игры (gamemode)
+    echo "" && echo "-- Режим игры --"
+    key="gamemode"; current_val=$(get_property "$key" "$CONFIG_FILE" "survival"); valid_options=("survival" "creative" "adventure");
+    while true; do
+        read -p "Режим (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"
+        is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done
+        if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi
+    done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    # Уровень сложности (difficulty)
+    echo "" && echo "-- Уровень сложности --"
+    key="difficulty"; current_val=$(get_property "$key" "$CONFIG_FILE" "easy"); valid_options=("peaceful" "easy" "normal" "hard");
+    while true; do
+        read -p "Сложность (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"
+        is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done
+        if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi
+    done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    msg "Настройки 'Общие' сохранены в $CONFIG_FILE. Требуется перезапуск сервера для применения."
+    return 0
+}
+
+# 2. Настройка раздела "Дополнительно"
+configure_advanced_settings() {
+    msg "--- 📜 Настройка: Дополнительно ---"
+    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
+    if [ ! -f "$CONFIG_FILE" ]; then error "Файл '$CONFIG_FILE' не найден."; return 1; fi
+
+    local key current_val new_val
+
+    # --- Часть 1: Настройки из server.properties (требуют перезапуска) ---
+    echo "" && msg "--- Настройки Мира (требуют перезапуска) ---"
+
+    # level-seed
+    echo "" && echo "-- Ключ генерации мира --"
+    key="level-seed"; current_val=$(get_property "$key" "$CONFIG_FILE" "");
+    read -p "Ключ генерации (сид) [$current_val]: " new_val; set_property "$key" "${new_val:-$current_val}" "$CONFIG_FILE"
+
+    # spawn-radius
+    echo "" && echo "-- Радиус возрождения --"; echo "Максимальный радиус в блоках от точки возрождения мира."
+    key="spawn-radius"; current_val=$(get_property "$key" "$CONFIG_FILE" "10");
+    read -p "Радиус (например, 5, 10) [$current_val]: " new_val; new_val="${new_val:-$current_val}";
+    if [[ "$new_val" =~ ^[0-9]+$ ]]; then set_property "$key" "$new_val" "$CONFIG_FILE"; else warning "Некорректное значение, оставлено: $current_val"; fi
+
+    # simulation-distance
+    echo "" && echo "-- Дистанция моделирования --"; echo "Расстояние, на котором мир 'живет'. Влияет на производительность."
+    key="simulation-distance"; current_val=$(get_property "$key" "$CONFIG_FILE" "8");
+    read -p "Дистанция (чанки, например 4, 6, 8) [$current_val]: " new_val; new_val="${new_val:-$current_val}";
+    if [[ "$new_val" =~ ^[0-9]+$ ]] && [ "$new_val" -ge 4 ]; then set_property "$key" "$new_val" "$CONFIG_FILE"; else warning "Некорректное значение, оставлено: $current_val"; fi
+
+    # --- Часть 2: Настройки Gamerules (требуют читов) ---
+    echo "" && msg "--- Правила Игры (требуют читов и запущенный сервер) ---"
+    local allow_cheats_enabled=$(get_property "allow-cheats" "$CONFIG_FILE" "false")
+
+    if [[ "$allow_cheats_enabled" != "true" ]]; then
+        warning "Читы выключены. Настройка правил из этого раздела невозможна."
+        return 0
     fi
-    msg "Белый список установлен в: $new_state (в $CONFIG_FILE)"
-    read -p "Перезапустить сервер '$SERVICE_NAME' для применения? (yes/no): " RESTART_CONFIRM
-    if [[ "$RESTART_CONFIRM" == "yes" ]]; then restart_server; else msg "Изменения вступят в силу после перезапуска."; fi
+    # Продолжаем, только если читы включены
+    # ... (код для настройки gamerules из этого раздела) ...
+    # Мы перенесли все gamerules в "Читы", так что эта часть может быть пустой
+    # или можно оставить самые нейтральные правила здесь.
+    # Давайте оставим здесь только 'showcoordinates', а остальное в читах.
+
+    local screen_name=${SERVICE_NAME%.service}
+    local server_is_active=false
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then server_is_active=true; else warning "Сервер не запущен, правила не применить."; fi
+
+    # Вспомогательная функция для запроса да/нет
+    ask_and_set_gamerule() {
+        local rule_name="$1"; local question="$2"; local choice state=""
+        echo "" && echo "-- $question --"
+        read -p "$question? (yes/no): " choice
+        if [[ "$choice" == "yes" || "$choice" == "y" ]]; then state="true"; fi
+        if [[ "$choice" == "no" || "$choice" == "n" ]]; then state="false"; fi
+        if [[ -n "$state" ]]; then
+            # Отправляем команду
+            local rule_cmd="gamerule $rule_name $state"
+            if $server_is_active; then
+                if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "$rule_cmd"$'\015'; then
+                    msg "Команда '$rule_cmd' отправлена."
+                    sleep 1
+                fi
+            fi
+        else warning "Ввод некорректен, пропущено."; fi
+    }
+    
+    ask_and_set_gamerule "showcoordinates" "Показывать координаты"
+    # Другие нейтральные правила можно добавить сюда
+
+    msg "Настройка 'Дополнительно' завершена. Не забудьте перезапустить сервер для применения некоторых изменений."
+    return 0
+}
+
+# 3. Настройка раздела "Игра по сети"
+configure_network_settings() {
+    msg "--- 🌐 Настройка: Игра по сети ---"
+    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
+    if [ ! -f "$CONFIG_FILE" ]; then error "Файл '$CONFIG_FILE' не найден."; return 1; fi
+
+    local key current_val new_val valid_options is_valid
+
+    # max-players
+    echo "" && echo "-- Максимальное количество игроков --"
+    key="max-players"; current_val=$(get_property "$key" "$CONFIG_FILE" "10");
+    read -p "Максимум игроков [$current_val]: " new_val; new_val="${new_val:-$current_val}";
+    if [[ "$new_val" =~ ^[0-9]+$ ]] && [ "$new_val" -ge 1 ]; then set_property "$key" "$new_val" "$CONFIG_FILE"; else warning "Некорректное значение, оставлено: $current_val"; fi
+
+    # pvp ("Огонь по своим")
+    echo "" && echo "-- Огонь по своим (PvP) --"
+    key="pvp"; current_val=$(get_property "$key" "$CONFIG_FILE" "true"); valid_options=("true" "false");
+    while true; do read -p "Разрешить PvP? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    # white-list
+    echo "" && echo "-- Белый список --"; echo "Аналог 'Доступ игрока' для выделенного сервера."
+    key="white-list"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
+    while true; do read -p "Включить Белый список? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    # default-player-permission-level
+    echo "" && echo "-- Разрешения игрока по умолчанию --"
+    key="default-player-permission-level"; current_val=$(get_property "$key" "$CONFIG_FILE" "member"); valid_options=("visitor" "member" "operator");
+    while true; do read -p "Разрешения (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    # online-mode
+    echo "" && echo "-- Режим онлайн (online-mode) --"; echo "true = только для лицензионных клиентов с Xbox Live."
+    key="online-mode"; current_val=$(get_property "$key" "$CONFIG_FILE" "true"); valid_options=("true" "false");
+    while true; do read -p "Режим онлайн? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    msg "Настройки 'Игра по сети' сохранены. Требуется перезапуск сервера для применения."
+    return 0
+}
+
+# 4. Настройка раздела "Читы"
+configure_cheats_settings() {
+    msg "--- 🛠️ Настройка: Читы и Правила Игры ---"
+    if ! is_server_installed; then error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен."; return 1; fi
+
+    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
+    local allow_cheats_enabled key current_val new_val valid_options is_valid
+
+    # Главный переключатель "Читы"
+    echo ""
+    warning "Включение читов позволит использовать команды и изменять правила игры, но ОТКЛЮЧИТ получение достижений."
+    key="allow-cheats"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
+    while true; do read -p "Включить читы? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+    allow_cheats_enabled="$new_val"
+
+    # Настройки из server.properties, которые логично находятся здесь
+    echo "" && msg "--- Дополнительные опции (требуют перезапуска) ---"
+
+    key="enable-command-blocks"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
+    echo "" && echo "-- Командные блоки --"
+    while true; do read -p "Включить командные блоки? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    key="education-edition"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
+    echo "" && echo "-- Education Edition --"
+    while true; do read -p "Включить Education Edition? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
+    set_property "$key" "$new_val" "$CONFIG_FILE"
+
+    # Настройка Gamerules
+    if [[ "$allow_cheats_enabled" != "true" ]]; then
+        msg "Читы выключены. Настройка остальных правил игры недоступна."
+        msg "Не забудьте перезапустить сервер для применения сделанных настроек."
+        return 0
+    fi
+
+    echo "" && msg "--- Правила Игры (применяются на лету, если сервер активен) ---"
+    local screen_name=${SERVICE_NAME%.service}
+    local server_is_active=false
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then server_is_active=true; msg "Сервер '$SERVICE_NAME' активен."; else warning "Сервер НЕ активен, правила не применить."; fi
+
+    # Вспомогательная функция для запроса да/нет
+    ask_and_set_gamerule() {
+        local rule_name="$1"; local question="$2"; local choice state=""
+        echo "" && echo "-- $question --"
+        read -p "$question? (yes/no): " choice
+        if [[ "$choice" == "yes" || "$choice" == "y" ]]; then state="true"; fi
+        if [[ "$choice" == "no" || "$choice" == "n" ]]; then state="false"; fi
+        if [[ -n "$state" ]]; then
+            local rule_cmd="gamerule $rule_name $state"
+            if $server_is_active; then
+                if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "$rule_cmd"$'\015'; then msg "Команда '$rule_cmd' отправлена."; sleep 1; fi
+            fi
+        else warning "Ввод некорректен, пропущено."; fi
+    }
+
+    ask_and_set_gamerule "dodaylightcycle" "Смена дня и ночи"
+    ask_and_set_gamerule "keepinventory" "Сохранять инвентарь"
+    ask_and_set_gamerule "domobspawning" "Создание мобов"
+    ask_and_set_gamerule "mobgriefing" "Вредительство мобов"
+    ask_and_set_gamerule "domobloot" "Выпадение добычи из сущностей"
+    ask_and_set_gamerule "doweathercycle" "Смена погоды"
+
+    echo "" && echo "-- Случайная скорость такта --"; echo "Стандарт: 3"
+    read -p "Введите скорость такта (целое число) [3]: " new_tick_speed; new_tick_speed=${new_tick_speed:-3}
+    if [[ "$new_tick_speed" =~ ^[0-9]+$ ]]; then
+        local rule_cmd="gamerule randomtickspeed $new_tick_speed"
+        if $server_is_active; then
+             if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "$rule_cmd"$'\015'; then msg "Команда '$rule_cmd' отправлена."; sleep 1; fi
+        fi
+    else warning "Некорректное значение, пропущено."; fi
+
+    msg "Настройка 'Читы' завершена."
+    msg "Изменения, требующие перезапуска: 'Включить читы', 'Командные блоки', 'Education Edition'."
     return 0
 }
 
