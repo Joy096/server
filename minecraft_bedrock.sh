@@ -76,17 +76,58 @@ is_server_installed() {
 
 # Установка необходимых зависимостей
 install_dependencies() {
+    local marker_file="/etc/minecraft_servers/.dependencies_installed"
+
+    # --- ARM Check (Always run this check on ARM) ---
+    if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
+        if ! command -v box64 >/dev/null; then
+            warning "⚠️ Обнаружена архитектура ARM. Для запуска сервера Minecraft Bedrock (x86_64) требуется эмулятор Box64."
+            read -p "Установить Box64 автоматически? (yes/no): " INSTALL_BOX64
+            if [[ "$INSTALL_BOX64" == "yes" ]]; then
+                msg "Добавление репозитория Box64..."
+                # Используем метод Ryan Fortner (рекомендуемый для Ubuntu/Debian)
+                if sudo wget https://ryanfortner.github.io/box64-debs/box64.list -O /etc/apt/sources.list.d/box64.list; then
+                    wget -qO- https://ryanfortner.github.io/box64-debs/KEY.gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/box64.gpg
+                    sudo apt-get update
+                    msg "Установка Box64..."
+                    if sudo apt-get install -y box64; then
+                        msg "✅ Box64 успешно установлен."
+                    else
+                        error "Не удалось установить Box64 через apt."
+                    fi
+                else
+                    error "Не удалось скачать список репозитория Box64."
+                fi
+            else
+                warning "Box64 не установлен. Сервер не запустится."
+            fi
+        fi
+    fi
+
+    # 1. Если маркер есть - выходим
+    if [ -f "$marker_file" ]; then
+        return 0
+    fi
+
+    # 2. Если маркера нет, но команды ЕСТЬ - создаем маркер и выходим
+    if command -v unzip >/dev/null && command -v wget >/dev/null && command -v curl >/dev/null && command -v screen >/dev/null && command -v jq >/dev/null && command -v zip >/dev/null; then
+         # Создаем маркер
+         sudo mkdir -p "$(dirname "$marker_file")"
+         sudo touch "$marker_file"
+         return 0
+    fi
+
     msg "Обновление списка пакетов..."
     # Подавляем вывод, проверяем код возврата
     if ! sudo apt-get update > /dev/null; then
         warning "Не удалось обновить список пакетов. Проверьте интернет-соединение."
     fi
 
-    msg "Установка необходимых пакетов (unzip, wget, curl, libssl-dev, screen, nano, ufw, jq, zip)..."
-    # Добавили zip для архива миграции
-    if ! sudo apt-get install -y unzip wget curl libssl-dev screen nano ufw jq zip > /dev/null; then
+    msg "Установка необходимых пакетов (unzip, wget, curl, libssl-dev, screen, nano, ufw, jq, zip, gpg)..."
+    # Добавили zip для архива миграции и gpg для box64
+    if ! sudo apt-get install -y unzip wget curl libssl-dev screen nano ufw jq zip gpg > /dev/null; then
         # Используем error и exit, так как без зависимостей скрипт бесполезен
-        error "Не удалось установить зависимости. Установите вручную: sudo apt install unzip wget curl libssl-dev screen nano ufw jq zip"
+        error "Не удалось установить зависимости. Установите вручную: sudo apt install unzip wget curl libssl-dev screen nano ufw jq zip gpg"
         exit 1
     fi
 
@@ -98,6 +139,10 @@ install_dependencies() {
             warning "Не удалось включить UFW."
         fi
     fi
+    
+    # Создаем маркер успешной установки
+    sudo mkdir -p "$(dirname "$marker_file")"
+    sudo touch "$marker_file"
 }
 
 # Создание пользователя для запуска сервера (если еще не создан)
@@ -180,6 +225,20 @@ create_systemd_service() {
     # Имя screen сессии будет таким же, как имя сервиса без ".service"
     local screen_session_name="${current_service_name%.service}"
 
+    # Определяем команду запуска в зависимости от архитектуры
+    local exec_cmd="./bedrock_server"
+    local arch=$(uname -m)
+    if [[ "$arch" == "aarch64" || "$arch" == "arm64" ]]; then
+        if command -v box64 >/dev/null; then
+            msg "⚠️ Обнаружена архитектура ARM ($arch). Используем Box64 для запуска."
+            exec_cmd="box64 ./bedrock_server"
+        else
+            warning "❌ Обнаружена архитектура ARM ($arch), но Box64 не найден!"
+            warning "Сервер Minecraft Bedrock (x86_64) не может работать на ARM без эмулятора."
+            warning "Пожалуйста, установите Box64 (https://github.com/ptitSeb/box64) и пересоздайте сервис."
+        fi
+    fi
+
     # Создаем файл сервиса
     # Используем sudo tee для записи от имени root
     if ! echo "[Unit]
@@ -190,7 +249,7 @@ After=network.target
 User=$SERVER_USER
 Group=$SERVER_USER
 WorkingDirectory=$current_install_dir
-ExecStart=/usr/bin/screen -DmS ${screen_session_name} bash -c 'LD_LIBRARY_PATH=. ./bedrock_server'
+ExecStart=/usr/bin/screen -DmS ${screen_session_name} bash -c 'LD_LIBRARY_PATH=. $exec_cmd'
 ExecStop=/usr/bin/screen -p 0 -S ${screen_session_name} -X stuff $'stop\015'
 ExecStopPost=/bin/sh -c \"sleep 1 && /usr/bin/screen -S ${screen_session_name} -X quit || true\"
 TimeoutStopSec=70
@@ -230,6 +289,11 @@ WantedBy=multi-user.target
 # --- ОПРЕДЕЛЕНИЕ Функции Мультисерверной Инициализации ---
 init_multiserver() {
     msg "Инициализация/Проверка мультисерверного режима..."
+
+    # Гарантируем наличие зависимостей и пользователя
+    install_dependencies
+    create_server_user
+
     # Создаем директории, если их нет (используем sudo)
     if [ ! -d "$SERVERS_CONFIG_DIR" ]; then
         msg "Создание директории конфигурации: $SERVERS_CONFIG_DIR"
@@ -393,6 +457,53 @@ start_server() {
         return 0
     fi
 
+    # --- FIX: Проверка занятости порта и очистка зависших процессов ---
+    if [ -z "$SERVER_PORT" ]; then
+         SERVER_PORT=$(get_property "server-port" "$DEFAULT_INSTALL_DIR/server.properties" "19132")
+    fi
+    
+    msg "Проверка доступности порта $SERVER_PORT..."
+    
+    # Функция для получения PID процесса на порту
+    get_port_pid() {
+        local port=$1
+        if command -v ss &>/dev/null; then
+            sudo ss -ulnp | grep ":$port " | grep -o 'pid=[0-9]*' | cut -d'=' -f2 | head -n 1
+        elif command -v netstat &>/dev/null; then
+            sudo netstat -ulnp | grep ":$port " | awk '{print $7}' | cut -d'/' -f1 | head -n 1
+        elif command -v lsof &>/dev/null; then
+            sudo lsof -i UDP:$port -t | head -n 1
+        else
+            echo ""
+        fi
+    }
+
+    local busy_pid=$(get_port_pid "$SERVER_PORT")
+
+    if [ -n "$busy_pid" ]; then
+        warning "Порт $SERVER_PORT занят процессом с PID $busy_pid."
+        # Получаем имя процесса
+        local proc_name=$(ps -p "$busy_pid" -o comm=)
+        msg "Имя процесса: $proc_name"
+
+        if [[ "$proc_name" == "bedrock_server" ]] || [[ "$proc_name" == "screen" ]]; then
+             warning "Обнаружен зависший процесс сервера или screen (PID: $busy_pid). Принудительное завершение..."
+             if sudo kill -9 "$busy_pid"; then
+                 msg "Процесс $busy_pid успешно завершен."
+                 sleep 2
+             else
+                 error "Не удалось завершить процесс $busy_pid. Запуск прерван."
+                 return 1
+             fi
+        else
+             error "Порт $SERVER_PORT занят сторонним процессом ($proc_name). Запуск невозможен."
+             return 1
+        fi
+    else
+        msg "Порт $SERVER_PORT свободен."
+    fi
+    # --- END FIX ---
+
     # Запускаем
     msg "Запуск сервиса '$SERVICE_NAME'..."
     if ! sudo systemctl start "$SERVICE_NAME"; then
@@ -435,30 +546,17 @@ stop_server() {
 # Перезапуск активного сервера
 restart_server() {
     msg "--- Перезапуск сервера (ID: $ACTIVE_SERVER_ID, Сервис: $SERVICE_NAME) ---"
-    if ! is_server_installed; then
-        error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен в '$DEFAULT_INSTALL_DIR'."
-        return 1
-    fi
-
-    # Проверяем включен ли (аналогично start_server)
-    if ! sudo systemctl is-enabled "$SERVICE_NAME" &>/dev/null ; then
-        warning "Сервис '$SERVICE_NAME' не включен для автозапуска. Включаю..."
-        if ! sudo systemctl enable "$SERVICE_NAME"; then
-            warning "Не удалось включить автозапуск сервиса $SERVICE_NAME."
-        fi
-    fi
-
-    # Перезапускаем
-    msg "Перезапуск сервиса '$SERVICE_NAME'..."
-    if ! sudo systemctl restart "$SERVICE_NAME"; then
-        error "Не удалось перезапустить сервис '$SERVICE_NAME'. Проверьте логи."
-        return 1
-    fi
-
-    msg "Команда перезапуска отправлена. Проверяем статус через 5 секунд..."
-    sleep 5
-    check_status # Вызываем проверку статуса после перезапуска
-    return $? # Возвращаем статус проверки
+    
+    # Используем последовательную остановку и запуск для гарантии очистки порта
+    # stop_server корректно остановит сервис
+    stop_server
+    
+    # Даем системе немного времени
+    sleep 2
+    
+    # start_server теперь содержит проверку занятости порта и очистку зависших процессов
+    start_server
+    return $?
 }
 
 # Проверка статуса активного сервера
@@ -777,6 +875,90 @@ restore_backup() {
     return 0
 }
 
+# Ротация резервных копий (удаление старых)
+rotate_backups() {
+    msg "Проверка ротации резервных копий (Макс: $MAX_BACKUPS)..."
+    if [ ! -d "$BACKUP_DIR" ]; then return 0; fi
+
+    # Получаем список бэкапов, отсортированный по времени (старые в конце), пропускаем первые MAX_BACKUPS
+    # ls -t: сортировка по времени (новые сверху)
+    # tail -n +$((MAX_BACKUPS + 1)): берем все, начиная с (MAX+1)-го
+    local backups_to_delete=$(ls -t "$BACKUP_DIR"/*.zip "$BACKUP_DIR"/*.tar.gz 2>/dev/null | tail -n +$((MAX_BACKUPS + 1)))
+
+    if [ -n "$backups_to_delete" ]; then
+        msg "Удаление старых резервных копий..."
+        # Устанавливаем IFS на перевод строки, чтобы корректно обрабатывать имена файлов с пробелами
+        local OLD_IFS=$IFS
+        IFS=$'\n'
+        for backup in $backups_to_delete; do
+            if [ -f "$backup" ]; then
+                sudo rm "$backup"
+                msg "Удален старый бэкап: $(basename "$backup")"
+            fi
+        done
+        IFS=$OLD_IFS
+    else
+        msg "Ротация не требуется."
+    fi
+}
+
+# Список резервных копий
+list_backups() {
+    msg "--- Список резервных копий ---"
+    if [ ! -d "$BACKUP_DIR" ]; then warning "Директория бэкапов не найдена."; return 0; fi
+
+    local backups=$(ls "$BACKUP_DIR"/*.zip "$BACKUP_DIR"/*.tar.gz 2>/dev/null)
+    if [ -z "$backups" ]; then
+        msg "Резервных копий нет."
+        return 0
+    fi
+
+    echo "Найдено:"
+    # Выводим список с размерами и датами
+    ls -lh "$BACKUP_DIR" | grep -E "\.zip$|\.tar\.gz$" | awk '{print $9, "(" $5, $6, $7, $8 ")"}'
+    echo "Всего места занято: $(du -sh "$BACKUP_DIR" | cut -f1)"
+    read -p "Нажмите Enter для продолжения..." DUMMY_VAR
+}
+
+# Удаление резервной копии
+delete_backup() {
+    msg "--- Удаление резервной копии ---"
+    if [ ! -d "$BACKUP_DIR" ]; then warning "Директория бэкапов не найдена."; return 0; fi
+
+    # Формируем массив бэкапов
+    local backups=()
+    mapfile -t backups < <(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "*.zip" -o -name "*.tar.gz" \) -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
+
+    if [ ${#backups[@]} -eq 0 ]; then msg "Резервных копий нет."; return 0; fi
+
+    echo "Выберите копию для удаления:"
+    for i in "${!backups[@]}"; do
+        echo "$((i+1)). $(basename "${backups[$i]}")"
+    done
+    echo "0. Отмена"
+
+    local choice
+    read -p "Ваш выбор: " choice
+
+    if [[ "$choice" == "0" ]]; then return 0; fi
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#backups[@]} ]; then
+        error "Некорректный выбор."
+        return 1
+    fi
+
+    local file_to_delete="${backups[$choice-1]}"
+    read -p "Удалить '$(basename "$file_to_delete")'? (yes/no): " CONFIRM
+    if [[ "$CONFIRM" == "yes" ]]; then
+        if sudo rm "$file_to_delete"; then
+            msg "Файл удален."
+        else
+            error "Не удалось удалить файл."
+        fi
+    else
+        msg "Отменено."
+    fi
+}
+
 # --- Функции Настройки АКТИВНОГО сервера ---
 
 # Получение значения параметра из файла конфигурации
@@ -852,266 +1034,342 @@ set_property() {
 # --- Новые функции настройки по разделам, в стиле игры ---
 
 # Подменю настройки сервера (точка входа)
-configure_menu() {
-    if ! is_server_installed; then
-        error "Сервер (ID: ${ACTIVE_SERVER_ID:-N/A}) не установлен. Сначала установите его."
-        return 1
+# --- Новые функции настройки по разделам ---
+
+# Хелпер для изменения булевых значений (true/false)
+change_prop_bool() {
+    local key="$1"; local file="$2"; local desc="$3"
+    local current=$(get_property "$key" "$file" "false")
+    local new_val="true"
+    if [[ "$current" == "true" ]]; then new_val="false"; fi
+    
+    echo "Текущее значение $desc ($key): $current"
+    read -p "Переключить на $new_val? (y/n): " confirm
+    if [[ "$confirm" == "y" ]]; then
+        set_property "$key" "$new_val" "$file"
+        msg "$desc изменено на $new_val"
     fi
+}
+
+# Хелпер для выбора из списка
+change_prop_select() {
+    local key="$1"; local file="$2"; local desc="$3"; shift 3; local options=("$@")
+    local current=$(get_property "$key" "$file" "${options[0]}")
+    
+    echo "--- $desc ($key) ---"
+    echo "Текущее: $current"
+    local i=1
+    for opt in "${options[@]}"; do
+        echo "$i. $opt"
+        ((i++))
+    done
+    read -p "Выберите вариант (1-${#options[@]}) или Enter для отмены: " choice
+    if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le ${#options[@]} ]; then
+        set_property "$key" "${options[$choice-1]}" "$file"
+        msg "$desc изменено на ${options[$choice-1]}"
+    fi
+}
+
+# Хелпер для ввода текста/числа
+change_prop_text() {
+    local key="$1"; local file="$2"; local desc="$3"
+    local current=$(get_property "$key" "$file" "")
+    
+    echo "--- $desc ($key) ---"
+    read -p "Введите новое значение [$current]: " new_val
+    if [ -n "$new_val" ]; then
+        set_property "$key" "$new_val" "$file"
+        msg "$desc изменено на $new_val"
+    fi
+}
+
+# Хелпер для Gamerule (требует активного сервера)
+change_gamerule_bool() {
+    local rule="$1"; local desc="$2"
+    local screen_name=${SERVICE_NAME%.service}
+    
+    if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        warning "Сервер не запущен. Нельзя изменить правило '$rule'."
+        return
+    fi
+    
+    echo "--- Правило: $desc ($rule) ---"
+    echo "1. Включить (true)"
+    echo "2. Выключить (false)"
+    read -p "Выберите (1/2): " choice
+    local val=""
+    case $choice in 1) val="true";; 2) val="false";; esac
+    
+    if [ -n "$val" ]; then
+        sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $val^M"
+        msg "Команда отправлена: gamerule $rule $val"
+        sleep 1
+    fi
+}
+
+# Хелпер для Gamerule (текст/число)
+change_gamerule_text() {
+    local rule="$1"; local desc="$2"
+    local screen_name=${SERVICE_NAME%.service}
+    
+    if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        warning "Сервер не запущен. Нельзя изменить правило '$rule'."
+        return
+    fi
+    
+    echo "--- Правило: $desc ($rule) ---"
+    read -p "Введите новое значение: " val
+    
+    if [ -n "$val" ]; then
+        sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $val^M"
+        msg "Команда отправлена: gamerule $rule $val"
+        sleep 1
+    fi
+}
+
+# Главное меню настроек
+configure_menu() {
+    ensure_whiptail
+    if ! is_server_installed; then error "Сервер не установлен."; return 1; fi
+    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
 
     while true; do
-        echo ""
-        echo "--- Меню Настройки Сервера (ID: $ACTIVE_SERVER_ID) ---"
-        echo "1. ⚙️ Общие (Режим игры, Сложность, Название)"
-        echo "2. 📜 Дополнительно (Ключ генерации, Настройки мира)"
-        echo "3. 🌐 Игра по сети (PvP, Белый список, Доступ)"
-        echo "4. 🛠️ Читы (Команды, Правила игры)"
-        echo "0. Назад в главное меню"
-        echo "--------------------------------------------------------"
+        local choice=$(whiptail --title "Настройки Сервера ($ACTIVE_SERVER_ID)" --menu "Выберите раздел:" 20 78 10 \
+            "1" "⚙️ Общие (Режим, Сложность, Имя)" \
+            "2" "📜 Дополнительно (Сид, Тип мира, Правила)" \
+            "3" "🌐 Игра по сети (Порт, Игроки, Whitelist)" \
+            "4" "🛠️ Читы (Gamerules, Командные блоки)" \
+            "5" "🔍 Другие настройки (Авто-поиск)" \
+            "0" "Назад" 3>&1 1>&2 2>&3)
+        
+        if [ $? -ne 0 ]; then return 0; fi
 
-        local config_choice
-        read -p "Выберите раздел для настройки: " config_choice
-
-        case $config_choice in
+        case $choice in
             1) configure_general_settings ;;
             2) configure_advanced_settings ;;
             3) configure_network_settings ;;
             4) configure_cheats_settings ;;
+            5) configure_other_settings ;;
             0) return 0 ;;
-            *) msg "Неверная опция." ;;
         esac
-
-        if [[ "$config_choice" != "0" ]]; then
-             read -p "Нажмите Enter для возврата в меню настроек..." DUMMY_VAR
-        fi
     done
 }
 
-# 1. Настройка раздела "Общие"
 configure_general_settings() {
-    msg "--- ⚙️ Настройка: Общие ---"
-    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
-    if [ ! -f "$CONFIG_FILE" ]; then error "Файл '$CONFIG_FILE' не найден."; return 1; fi
-
-    local key current_val new_val valid_options is_valid
-
-    # Название мира (server-name)
-    echo "" && echo "-- Название мира --"
-    key="server-name"; current_val=$(get_property "$key" "$CONFIG_FILE" "Мой мир");
-    read -p "Название [$current_val]: " new_val; set_property "$key" "${new_val:-$current_val}" "$CONFIG_FILE"
-
-    # Режим игры (gamemode)
-    echo "" && echo "-- Режим игры --"
-    key="gamemode"; current_val=$(get_property "$key" "$CONFIG_FILE" "survival"); valid_options=("survival" "creative" "adventure");
+    local f="$DEFAULT_INSTALL_DIR/server.properties"
     while true; do
-        read -p "Режим (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"
-        is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done
-        if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi
-    done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
+        local choice=$(whiptail --title "Общие Настройки" --menu "Выберите опцию:" 20 78 10 \
+            "server-name" "Имя сервера [$(get_property "server-name" "$f" "?")]" \
+            "gamemode" "Режим игры [$(get_property "gamemode" "$f" "?")]" \
+            "difficulty" "Сложность [$(get_property "difficulty" "$f" "?")]" \
+            "0" "Назад" 3>&1 1>&2 2>&3)
+            
+        if [ $? -ne 0 ]; then return; fi
 
-    # Уровень сложности (difficulty)
-    echo "" && echo "-- Уровень сложности --"
-    key="difficulty"; current_val=$(get_property "$key" "$CONFIG_FILE" "easy"); valid_options=("peaceful" "easy" "normal" "hard");
-    while true; do
-        read -p "Сложность (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"
-        is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done
-        if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi
+        case $choice in
+            server-name) input_prop "server-name" "$f" "Имя сервера" ;;
+            gamemode) select_prop "gamemode" "$f" "Режим игры" "survival" "creative" "adventure" ;;
+            difficulty) select_prop "difficulty" "$f" "Сложность" "peaceful" "easy" "normal" "hard" ;;
+            0) return ;;
+        esac
     done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    msg "Настройки 'Общие' сохранены в $CONFIG_FILE. Требуется перезапуск сервера для применения."
-    return 0
 }
 
-# 2. Настройка раздела "Дополнительно"
 configure_advanced_settings() {
-    msg "--- 📜 Настройка: Дополнительно ---"
-    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
-    if [ ! -f "$CONFIG_FILE" ]; then error "Файл '$CONFIG_FILE' не найден."; return 1; fi
+    local f="$DEFAULT_INSTALL_DIR/server.properties"
+    while true; do
+        local choice=$(whiptail --title "Дополнительно" --menu "Выберите опцию:" 22 78 12 \
+            "level-seed" "Сид мира [$(get_property "level-seed" "$f" "")]" \
+            "level-type" "Тип мира [$(get_property "level-type" "$f" "DEFAULT")]" \
+            "simulation-distance" "Дистанция симуляции [$(get_property "simulation-distance" "$f" "8")]" \
+            "spawn-radius" "Радиус спавна [$(get_property "spawn-radius" "$f" "10")]" \
+            "default-player-permission-level" "Права [$(get_property "default-player-permission-level" "$f" "member")]" \
+            "GAMERULES" "--- Правила мира (Gamerules) ---" \
+            "showcoordinates" "Показать координаты" \
+            "dofiretick" "Распространение огня" \
+            "tntexplodes" "Взрыв динамита" \
+            "doimmediaterespawn" "Мгновенное возрождение" \
+            "respawnblocksexplode" "Взрыв блоков возрождения" \
+            "recipesunlock" "Разблокировка рецептов" \
+            "playerssleepingpercentage" "Процент спящих игроков" \
+            "naturalregeneration" "Естественная регенерация" \
+            "dotiledrops" "Выпадение предметов из блоков" \
+            "0" "Назад" 3>&1 1>&2 2>&3)
 
-    local key current_val new_val
+        if [ $? -ne 0 ]; then return; fi
 
-    # --- Часть 1: Настройки из server.properties (требуют перезапуска) ---
-    echo "" && msg "--- Настройки Мира (требуют перезапуска) ---"
-
-    # level-seed
-    echo "" && echo "-- Ключ генерации мира --"
-    key="level-seed"; current_val=$(get_property "$key" "$CONFIG_FILE" "");
-    read -p "Ключ генерации (сид) [$current_val]: " new_val; set_property "$key" "${new_val:-$current_val}" "$CONFIG_FILE"
-
-    # spawn-radius
-    echo "" && echo "-- Радиус возрождения --"; echo "Максимальный радиус в блоках от точки возрождения мира."
-    key="spawn-radius"; current_val=$(get_property "$key" "$CONFIG_FILE" "10");
-    read -p "Радиус (например, 5, 10) [$current_val]: " new_val; new_val="${new_val:-$current_val}";
-    if [[ "$new_val" =~ ^[0-9]+$ ]]; then set_property "$key" "$new_val" "$CONFIG_FILE"; else warning "Некорректное значение, оставлено: $current_val"; fi
-
-    # simulation-distance
-    echo "" && echo "-- Дистанция моделирования --"; echo "Расстояние, на котором мир 'живет'. Влияет на производительность."
-    key="simulation-distance"; current_val=$(get_property "$key" "$CONFIG_FILE" "8");
-    read -p "Дистанция (чанки, например 4, 6, 8) [$current_val]: " new_val; new_val="${new_val:-$current_val}";
-    if [[ "$new_val" =~ ^[0-9]+$ ]] && [ "$new_val" -ge 4 ]; then set_property "$key" "$new_val" "$CONFIG_FILE"; else warning "Некорректное значение, оставлено: $current_val"; fi
-
-    # --- Часть 2: Настройки Gamerules (требуют читов) ---
-    echo "" && msg "--- Правила Игры (требуют читов и запущенный сервер) ---"
-    local allow_cheats_enabled=$(get_property "allow-cheats" "$CONFIG_FILE" "false")
-
-    if [[ "$allow_cheats_enabled" != "true" ]]; then
-        warning "Читы выключены. Настройка правил из этого раздела невозможна."
-        return 0
-    fi
-    # Продолжаем, только если читы включены
-    # ... (код для настройки gamerules из этого раздела) ...
-    # Мы перенесли все gamerules в "Читы", так что эта часть может быть пустой
-    # или можно оставить самые нейтральные правила здесь.
-    # Давайте оставим здесь только 'showcoordinates', а остальное в читах.
-
-    local screen_name=${SERVICE_NAME%.service}
-    local server_is_active=false
-    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then server_is_active=true; else warning "Сервер не запущен, правила не применить."; fi
-
-    # Вспомогательная функция для запроса да/нет
-    ask_and_set_gamerule() {
-        local rule_name="$1"; local question="$2"; local choice state=""
-        echo "" && echo "-- $question --"
-        read -p "$question? (yes/no): " choice
-        if [[ "$choice" == "yes" || "$choice" == "y" ]]; then state="true"; fi
-        if [[ "$choice" == "no" || "$choice" == "n" ]]; then state="false"; fi
-        if [[ -n "$state" ]]; then
-            # Отправляем команду
-            local rule_cmd="gamerule $rule_name $state"
-            if $server_is_active; then
-                if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "$rule_cmd"$'\015'; then
-                    msg "Команда '$rule_cmd' отправлена."
-                    sleep 1
-                fi
-            fi
-        else warning "Ввод некорректен, пропущено."; fi
-    }
-    
-    ask_and_set_gamerule "showcoordinates" "Показывать координаты"
-    # Другие нейтральные правила можно добавить сюда
-
-    msg "Настройка 'Дополнительно' завершена. Не забудьте перезапустить сервер для применения некоторых изменений."
-    return 0
+        case $choice in
+            level-seed) input_prop "level-seed" "$f" "Сид" ;;
+            level-type) select_prop "level-type" "$f" "Тип мира" "DEFAULT" "FLAT" "LEGACY" ;;
+            simulation-distance) input_prop "simulation-distance" "$f" "Дистанция симуляции" ;;
+            spawn-radius) input_prop "spawn-radius" "$f" "Радиус спавна" ;;
+            default-player-permission-level) select_prop "default-player-permission-level" "$f" "Права" "visitor" "member" "operator" ;;
+            GAMERULES) ;;
+            playerssleepingpercentage) 
+                 local val=$(whiptail --inputbox "Процент спящих (0-100):" 10 60 3>&1 1>&2 2>&3)
+                 if [ -n "$val" ]; then menu_gamerule_cmd "playerssleepingpercentage" "$val"; fi
+                 ;;
+            0) return ;;
+            *) menu_gamerule "$choice" "Правило $choice" ;;
+        esac
+    done
 }
 
-# 3. Настройка раздела "Игра по сети"
 configure_network_settings() {
-    msg "--- 🌐 Настройка: Игра по сети ---"
-    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
-    if [ ! -f "$CONFIG_FILE" ]; then error "Файл '$CONFIG_FILE' не найден."; return 1; fi
+    local f="$DEFAULT_INSTALL_DIR/server.properties"
+    while true; do
+        local choice=$(whiptail --title "Игра по сети" --menu "Выберите опцию:" 20 78 10 \
+            "max-players" "Макс. игроков [$(get_property "max-players" "$f" "10")]" \
+            "online-mode" "Online Mode (Лицензия) [$(fmt_bool $(get_property "online-mode" "$f" "true"))]" \
+            "white-list" "White List [$(fmt_bool $(get_property "white-list" "$f" "false"))]" \
+            "pvp" "PvP (Огонь по своим) [$(fmt_bool $(get_property "pvp" "$f" "true"))]" \
+            "view-distance" "Прорисовка [$(get_property "view-distance" "$f" "32")]" \
+            "0" "Назад" 3>&1 1>&2 2>&3)
 
-    local key current_val new_val valid_options is_valid
+        if [ $? -ne 0 ]; then return; fi
 
-    # max-players
-    echo "" && echo "-- Максимальное количество игроков --"
-    key="max-players"; current_val=$(get_property "$key" "$CONFIG_FILE" "10");
-    read -p "Максимум игроков [$current_val]: " new_val; new_val="${new_val:-$current_val}";
-    if [[ "$new_val" =~ ^[0-9]+$ ]] && [ "$new_val" -ge 1 ]; then set_property "$key" "$new_val" "$CONFIG_FILE"; else warning "Некорректное значение, оставлено: $current_val"; fi
-
-    # pvp ("Огонь по своим")
-    echo "" && echo "-- Огонь по своим (PvP) --"
-    key="pvp"; current_val=$(get_property "$key" "$CONFIG_FILE" "true"); valid_options=("true" "false");
-    while true; do read -p "Разрешить PvP? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # white-list
-    echo "" && echo "-- Белый список --"; echo "Аналог 'Доступ игрока' для выделенного сервера."
-    key="white-list"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
-    while true; do read -p "Включить Белый список? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # default-player-permission-level
-    echo "" && echo "-- Разрешения игрока по умолчанию --"
-    key="default-player-permission-level"; current_val=$(get_property "$key" "$CONFIG_FILE" "member"); valid_options=("visitor" "member" "operator");
-    while true; do read -p "Разрешения (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # online-mode
-    echo "" && echo "-- Режим онлайн (online-mode) --"; echo "true = только для лицензионных клиентов с Xbox Live."
-    key="online-mode"; current_val=$(get_property "$key" "$CONFIG_FILE" "true"); valid_options=("true" "false");
-    while true; do read -p "Режим онлайн? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    msg "Настройки 'Игра по сети' сохранены. Требуется перезапуск сервера для применения."
-    return 0
+        case $choice in
+            max-players) input_prop "max-players" "$f" "Макс. игроков" ;;
+            online-mode) toggle_prop "online-mode" "$f" ;;
+            white-list) toggle_prop "white-list" "$f" ;;
+            pvp) toggle_prop "pvp" "$f" ;;
+            view-distance) input_prop "view-distance" "$f" "Прорисовка" ;;
+            0) return ;;
+        esac
+    done
 }
 
-# 4. Настройка раздела "Читы"
 configure_cheats_settings() {
-    msg "--- 🛠️ Настройка: Читы и Правила Игры ---"
-    if ! is_server_installed; then error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен."; return 1; fi
+    local f="$DEFAULT_INSTALL_DIR/server.properties"
+    while true; do
+        local choice=$(whiptail --title "Читы" --menu "Выберите опцию:" 22 78 12 \
+            "allow-cheats" "Разрешить читы [$(fmt_bool $(get_property "allow-cheats" "$f" "false"))]" \
+            "enable-command-blocks" "Командные блоки [$(fmt_bool $(get_property "enable-command-blocks" "$f" "false"))]" \
+            "GAMERULES" "--- Правила (Gamerules) ---" \
+            "dodaylightcycle" "Смена дня/ночи" \
+            "keepinventory" "Сохранение инвентаря" \
+            "domobspawning" "Спавн мобов" \
+            "mobgriefing" "Разрушение мобами" \
+            "doweathercycle" "Смена погоды" \
+            "doentitydrops" "Выпадение добычи из сущностей" \
+            "commandblockoutput" "Вывод командных блоков" \
+            "randomtickspeed" "Случайная скорость такта" \
+            "0" "Назад" 3>&1 1>&2 2>&3)
 
-    local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
-    local allow_cheats_enabled key current_val new_val valid_options is_valid
+        if [ $? -ne 0 ]; then return; fi
 
-    # Главный переключатель "Читы"
-    echo ""
-    warning "Включение читов позволит использовать команды и изменять правила игры, но ОТКЛЮЧИТ получение достижений."
-    key="allow-cheats"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
-    while true; do read -p "Включить читы? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-    allow_cheats_enabled="$new_val"
+        case $choice in
+            allow-cheats) toggle_prop "allow-cheats" "$f" ;;
+            enable-command-blocks) toggle_prop "enable-command-blocks" "$f" ;;
+            GAMERULES) ;;
+            randomtickspeed)
+                 local val=$(whiptail --inputbox "Скорость такта (def: 1):" 10 60 3>&1 1>&2 2>&3)
+                 if [ -n "$val" ]; then menu_gamerule_cmd "randomtickspeed" "$val"; fi
+                 ;;
+            0) return ;;
+            *) menu_gamerule "$choice" "Правило $choice" ;;
+        esac
+    done
+}
 
-    # Настройки из server.properties, которые логично находятся здесь
-    echo "" && msg "--- Дополнительные опции (требуют перезапуска) ---"
-
-    key="enable-command-blocks"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
-    echo "" && echo "-- Командные блоки --"
-    while true; do read -p "Включить командные блоки? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    key="education-edition"; current_val=$(get_property "$key" "$CONFIG_FILE" "false"); valid_options=("true" "false");
-    echo "" && echo "-- Education Edition --"
-    while true; do read -p "Включить Education Edition? (${valid_options[*]}) [$current_val]: " new_val; new_val="${new_val:-$current_val}"; is_valid=0; for option in "${valid_options[@]}"; do if [[ "$new_val" == "$option" ]]; then is_valid=1; break; fi; done; if [[ $is_valid -eq 1 ]]; then break; else echo "Неверно!"; fi; done
-    set_property "$key" "$new_val" "$CONFIG_FILE"
-
-    # Настройка Gamerules
-    if [[ "$allow_cheats_enabled" != "true" ]]; then
-        msg "Читы выключены. Настройка остальных правил игры недоступна."
-        msg "Не забудьте перезапустить сервер для применения сделанных настроек."
-        return 0
+configure_other_settings() {
+    local f="$DEFAULT_INSTALL_DIR/server.properties"
+    # Список ключей, которые мы уже показали в других меню
+    local known="server-name|gamemode|difficulty|level-seed|level-type|simulation-distance|spawn-radius|default-player-permission-level|max-players|online-mode|white-list|pvp|view-distance|allow-cheats|enable-command-blocks|server-port|server-portv6|server-ip"
+    
+    # Ищем ключи, которых нет в known
+    local others=($(grep -vE "^#|^$|($known)=" "$f" | cut -d'=' -f1))
+    
+    if [ ${#others[@]} -eq 0 ]; then whiptail --msgbox "Нет других настроек." 10 60; return; fi
+    
+    local menu_items=()
+    for key in "${others[@]}"; do
+        local val=$(get_property "$key" "$f" "")
+        menu_items+=("$key" "$val")
+    done
+    
+    local choice=$(whiptail --title "Другие настройки" --menu "Выберите параметр:" 20 78 10 "${menu_items[@]}" 3>&1 1>&2 2>&3)
+    
+    if [ $? -eq 0 ]; then
+        input_prop "$choice" "$f" "$choice"
     fi
+}
 
-    echo "" && msg "--- Правила Игры (применяются на лету, если сервер активен) ---"
+# Helper for Gamerule (Direct Command)
+menu_gamerule_cmd() {
+    local rule="$1"; local val="$2"
     local screen_name=${SERVICE_NAME%.service}
-    local server_is_active=false
-    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then server_is_active=true; msg "Сервер '$SERVICE_NAME' активен."; else warning "Сервер НЕ активен, правила не применить."; fi
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $val^M"
+    fi
+}
 
-    # Вспомогательная функция для запроса да/нет
-    ask_and_set_gamerule() {
-        local rule_name="$1"; local question="$2"; local choice state=""
-        echo "" && echo "-- $question --"
-        read -p "$question? (yes/no): " choice
-        if [[ "$choice" == "yes" || "$choice" == "y" ]]; then state="true"; fi
-        if [[ "$choice" == "no" || "$choice" == "n" ]]; then state="false"; fi
-        if [[ -n "$state" ]]; then
-            local rule_cmd="gamerule $rule_name $state"
-            if $server_is_active; then
-                if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "$rule_cmd"$'\015'; then msg "Команда '$rule_cmd' отправлена."; sleep 1; fi
-            fi
-        else warning "Ввод некорректен, пропущено."; fi
-    }
+ensure_whiptail() {
+    if ! command -v whiptail >/dev/null; then
+        echo "Установка whiptail..."
+        sudo apt-get update && sudo apt-get install -y whiptail
+    fi
+}
 
-    ask_and_set_gamerule "dodaylightcycle" "Смена дня и ночи"
-    ask_and_set_gamerule "keepinventory" "Сохранять инвентарь"
-    ask_and_set_gamerule "domobspawning" "Создание мобов"
-    ask_and_set_gamerule "mobgriefing" "Вредительство мобов"
-    ask_and_set_gamerule "domobloot" "Выпадение добычи из сущностей"
-    ask_and_set_gamerule "doweathercycle" "Смена погоды"
+# Helper to format boolean for menu
+fmt_bool() {
+    if [[ "$1" == "true" ]]; then echo "[ВКЛ]"; else echo "[ВЫКЛ]"; fi
+}
 
-    echo "" && echo "-- Случайная скорость такта --"; echo "Стандарт: 3"
-    read -p "Введите скорость такта (целое число) [3]: " new_tick_speed; new_tick_speed=${new_tick_speed:-3}
-    if [[ "$new_tick_speed" =~ ^[0-9]+$ ]]; then
-        local rule_cmd="gamerule randomtickspeed $new_tick_speed"
-        if $server_is_active; then
-             if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "$rule_cmd"$'\015'; then msg "Команда '$rule_cmd' отправлена."; sleep 1; fi
-        fi
-    else warning "Некорректное значение, пропущено."; fi
+# Helper to toggle boolean property
+toggle_prop() {
+    local key="$1"; local file="$2"
+    local current=$(get_property "$key" "$file" "false")
+    local new_val="true"
+    if [[ "$current" == "true" ]]; then new_val="false"; fi
+    set_property "$key" "$new_val" "$file"
+}
 
-    msg "Настройка 'Читы' завершена."
-    msg "Изменения, требующие перезапуска: 'Включить читы', 'Командные блоки', 'Education Edition'."
-    return 0
+# Helper for Input Box
+input_prop() {
+    local key="$1"; local file="$2"; local title="$3"
+    local current=$(get_property "$key" "$file" "")
+    local new_val=$(whiptail --title "$title" --inputbox "Введите значение для $key:" 10 60 "$current" 3>&1 1>&2 2>&3)
+    if [ $? -eq 0 ] && [ -n "$new_val" ]; then
+        set_property "$key" "$new_val" "$file"
+    fi
+}
+
+# Helper for Radio List (Select)
+select_prop() {
+    local key="$1"; local file="$2"; local title="$3"; shift 3; local options=("$@")
+    local current=$(get_property "$key" "$file" "")
+    
+    # Construct radiolist args
+    local args=()
+    for opt in "${options[@]}"; do
+        local status="OFF"
+        if [[ "$opt" == "$current" ]]; then status="ON"; fi
+        args+=("$opt" "" "$status")
+    done
+    
+    local new_val=$(whiptail --title "$title" --radiolist "Выберите значение:" 15 60 6 "${args[@]}" 3>&1 1>&2 2>&3)
+    if [ $? -eq 0 ] && [ -n "$new_val" ]; then
+        set_property "$key" "$new_val" "$file"
+    fi
+}
+
+# Helper for Gamerule (Menu)
+menu_gamerule() {
+    local rule="$1"; local title="$2"
+    if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        whiptail --msgbox "Сервер не запущен. Нельзя изменить правило '$rule'." 10 60
+        return
+    fi
+    
+    local screen_name=${SERVICE_NAME%.service}
+    local choice=$(whiptail --title "$title" --menu "Выберите состояние правила $rule:" 12 60 2 \
+        "true" "Включить" \
+        "false" "Выключить" 3>&1 1>&2 2>&3)
+        
+    if [ $? -eq 0 ]; then
+        sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $choice^M"
+    fi
 }
 
 # Управление файлом белого списка (whitelist.json)
@@ -1466,6 +1724,147 @@ load_server_config() {
     return 0
 }
 
+# Установка сервера Bedrock
+install_bds() {
+    local install_dir="$1"
+    local service_name="$2"
+    local server_port="$3"
+    local local_zip_path="$4"
+
+    if [ -z "$install_dir" ] || [ -z "$service_name" ] || [ -z "$server_port" ]; then
+        error "Внутренняя ошибка: Неверные аргументы для install_bds."
+        return 1
+    fi
+
+    msg "--- Установка сервера в '$install_dir' ---"
+
+    # 1. Создание директории
+    if [ ! -d "$install_dir" ]; then
+        msg "Создание директории установки..."
+        if ! sudo mkdir -p "$install_dir"; then error "Не удалось создать директорию."; return 1; fi
+        sudo chown "$SERVER_USER":"$SERVER_USER" "$install_dir"
+    fi
+
+    # 2. Скачивание или использование локального файла
+    local temp_zip="/tmp/bedrock_server.zip"
+    
+    if [ -n "$local_zip_path" ]; then
+        msg "Использование локального файла: $local_zip_path"
+        if [ ! -f "$local_zip_path" ]; then
+            error "Локальный файл не найден: $local_zip_path"
+            return 1
+        fi
+        # Копируем во временный файл, чтобы не трогать оригинал и унифицировать процесс
+        if ! cp "$local_zip_path" "$temp_zip"; then
+            error "Не удалось скопировать локальный файл во временную директорию."
+            return 1
+        fi
+    else
+        msg "Получение ссылки на последнюю версию..."
+        # Парсим страницу загрузки, чтобы найти актуальную ссылку
+        # Используем User-Agent, чтобы сайт не блокировал запрос
+        local download_url=$(curl -s -H "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" https://www.minecraft.net/en-us/download/server/bedrock | grep -o 'https://minecraft.azureedge.net/bin-linux/[^"]*zip' | head -n 1)
+
+        if [ -z "$download_url" ]; then
+            error "Не удалось найти ссылку для скачивания. Возможно, изменилась структура сайта Minecraft."
+            return 1
+        fi
+
+        msg "Скачивание сервера: $download_url"
+        if ! wget -q --show-progress -O "$temp_zip" "$download_url"; then
+            error "Ошибка при скачивании файла."
+            return 1
+        fi
+    fi
+
+    # 3. Распаковка
+    msg "Распаковка архива..."
+    if ! sudo unzip -q -o "$temp_zip" -d "$install_dir"; then
+        error "Ошибка при распаковке."
+        rm -f "$temp_zip"
+        return 1
+    fi
+    rm -f "$temp_zip"
+
+    # 4. Настройка прав
+    msg "Настройка прав доступа..."
+    sudo chown -R "$SERVER_USER":"$SERVER_USER" "$install_dir"
+    sudo chmod +x "$install_dir/bedrock_server"
+
+    # 5. Настройка порта в server.properties
+    msg "Настройка порта $server_port..."
+    local props_file="$install_dir/server.properties"
+    if [ -f "$props_file" ]; then
+        # Используем функцию set_property, но она требует, чтобы файл существовал
+        # Мы не можем использовать set_property напрямую, так как она работает с sudo и может не найти файл, если права кривые
+        # Но мы только что сделали chown.
+        # Однако set_property - это функция скрипта.
+        # Проще сделать sed напрямую здесь или вызвать set_property, если она доступна.
+        # set_property определена выше, так что доступна.
+        set_property "server-port" "$server_port" "$props_file"
+        # Используем порт+1 для IPv6, чтобы избежать конфликтов
+        local portv6=$((server_port + 1))
+        set_property "server-portv6" "$portv6" "$props_file"
+    else
+        warning "Файл server.properties не найден после распаковки."
+    fi
+
+    # 6. Создание сервиса
+    if ! create_systemd_service "$install_dir" "$service_name"; then
+        error "Не удалось создать сервис."
+        return 1
+    fi
+
+    # 7. Открытие порта
+    open_firewall_port "$server_port"
+
+    msg "✅ Установка сервера завершена успешно."
+    return 0
+}
+
+# Удаление сервера (файлы, сервис, порт)
+uninstall_bds() {
+    local dir="$1"
+    local service="$2"
+    local port="$3"
+
+    msg "--- Процесс удаления сервера ---"
+
+    # 1. Остановка и отключение сервиса
+    if sudo systemctl is-active --quiet "$service"; then
+        msg "Остановка сервиса '$service'..."
+        sudo systemctl stop "$service"
+    fi
+    if sudo systemctl is-enabled --quiet "$service"; then
+        msg "Отключение автозапуска..."
+        sudo systemctl disable "$service"
+    fi
+
+    # 2. Удаление файла сервиса
+    local service_file="/etc/systemd/system/$service"
+    if [ -f "$service_file" ]; then
+        msg "Удаление файла сервиса..."
+        sudo rm -f "$service_file"
+        sudo systemctl daemon-reload
+    fi
+
+    # 3. Закрытие порта
+    if [ -n "$port" ]; then
+        close_firewall_port "$port"
+    fi
+
+    # 4. Удаление файлов
+    if [ -d "$dir" ]; then
+        msg "Удаление директории сервера '$dir'..."
+        sudo rm -rf "$dir"
+    else
+        warning "Директория '$dir' не найдена."
+    fi
+
+    msg "✅ Сервер удален."
+    return 0
+}
+
 # Создание нового сервера
 create_new_server() {
     msg "--- Создание нового сервера Minecraft Bedrock ---"
@@ -1486,10 +1885,11 @@ create_new_server() {
     if grep -q "^${server_id}:" "$SERVERS_CONFIG_FILE"; then error "Сервер с ID '$server_id' уже существует."; return 1; fi
 
     # Запрос порта
-    read -p "Введите порт для сервера (например, 19133): " server_port
+    read -p "Введите порт для сервера (например, 19132): " server_port
+    server_port=${server_port:-19132}
     if ! [[ "$server_port" =~ ^[0-9]+$ ]] || [ "$server_port" -lt 1024 ] || [ "$server_port" -gt 65535 ]; then error "Некорректный порт (1024-65535)."; return 1; fi
-    # Проверка уникальности порта
-    if grep -q ":${server_port}:" "$SERVERS_CONFIG_FILE"; then
+    # Проверка уникальности порта (игнорируя комментарии)
+    if grep -v '^#' "$SERVERS_CONFIG_FILE" | grep -q ":${server_port}:"; then
         warning "Порт $server_port уже используется другим сервером!"
         read -p "Продолжить с этим портом (может вызвать проблемы)? (yes/no): " CONT
         if [[ "$CONT" != "yes" ]]; then msg "Создание сервера отменено."; return 1; fi
@@ -1500,10 +1900,27 @@ create_new_server() {
     if [ -d "$new_dir" ]; then error "Директория '$new_dir' уже существует."; return 1; fi
     new_service="bds_${server_id}.service"
 
+    # Выбор метода установки
+    echo "Выберите метод установки:"
+    echo "1. Скачать автоматически (с minecraft.net)"
+    echo "2. Использовать локальный zip-файл"
+    local install_method
+    read -p "Ваш выбор [1]: " install_method
+    install_method=${install_method:-1}
+
+    local local_zip=""
+    if [[ "$install_method" == "2" ]]; then
+        read -p "Введите полный путь к zip-файлу: " local_zip
+        if [ ! -f "$local_zip" ]; then
+            error "Файл '$local_zip' не найден."
+            return 1
+        fi
+    fi
+
     # Запускаем установку с новыми параметрами
     msg "Установка нового сервера '$server_name' (ID: $server_id)..."
     # install_bds сама создаст директорию, сервис, откроет порт
-    if ! install_bds "$new_dir" "$new_service" "$server_port"; then
+    if ! install_bds "$new_dir" "$new_service" "$server_port" "$local_zip"; then
         # install_bds должна была вывести свою ошибку
         error "Не удалось завершить установку нового сервера."
         # Дополнительно чистим, если что-то было создано частично
@@ -1524,6 +1941,14 @@ create_new_server() {
     if [[ "$ACTIVATE_NEW" == "yes" ]]; then
         if ! load_server_config "$server_id"; then
              warning "Не удалось автоматически активировать новый сервер."
+        else
+             # Автозапуск
+             msg "Запуск нового сервера..."
+             if start_server; then
+                 msg "Сервер запущен!"
+             else
+                 warning "Не удалось запустить сервер."
+             fi
         fi
     fi
     return 0
@@ -2200,6 +2625,232 @@ wipe_all_servers() {
     return 0
 }
 
+# Настройка автоматического резервного копирования (cron)
+setup_auto_backup() {
+    msg "--- Настройка Автоматического Бэкапа ---"
+    msg "Эта функция добавит задание в cron для запуска этого скрипта с флагом --auto-backup."
+    msg "Бэкапы будут создаваться для ВСЕХ серверов."
+
+    # Получаем полный путь к текущему скрипту
+    local script_path=$(readlink -f "$0")
+
+    # Проверяем, есть ли уже задание
+    local current_cron=$(sudo crontab -l 2>/dev/null)
+    if echo "$current_cron" | grep -q "$script_path --auto-backup"; then
+        msg "Автобэкап уже настроен."
+        read -p "Хотите удалить или изменить расписание? (delete/change/cancel): " ACTION
+        if [[ "$ACTION" == "delete" ]]; then
+            # Удаляем строку с нашим скриптом
+            echo "$current_cron" | grep -v "$script_path --auto-backup" | sudo crontab -
+            msg "Автобэкап отключен."
+            return 0
+        elif [[ "$ACTION" != "change" ]]; then
+            return 0
+        fi
+    fi
+
+    echo "Выберите частоту бэкапов:"
+    echo "1. Ежедневно в 04:00"
+    echo "2. Каждые 12 часов (04:00 и 16:00)"
+    echo "3. Каждый час (в 00 минут)"
+    echo "4. Ввести свое выражение cron"
+    read -p "Ваш выбор: " choice
+
+    local cron_schedule=""
+    case $choice in
+        1) cron_schedule="0 4 * * *" ;;
+        2) cron_schedule="0 4,16 * * *" ;;
+        3) cron_schedule="0 * * * *" ;;
+        4) read -p "Введите выражение cron (например, '30 2 * * *'): " cron_schedule ;;
+        *) msg "Неверный выбор."; return 1 ;;
+    esac
+
+    if [ -z "$cron_schedule" ]; then error "Пустое расписание."; return 1; fi
+
+    # Формируем новую задачу
+    local new_job="$cron_schedule $script_path --auto-backup >> /var/log/minecraft_backup.log 2>&1"
+
+    # Удаляем старую задачу (если была) и добавляем новую
+    # Используем временный файл
+    local temp_cron=$(mktemp)
+    sudo crontab -l 2>/dev/null | grep -v "$script_path --auto-backup" > "$temp_cron"
+    echo "$new_job" >> "$temp_cron"
+    
+    if sudo crontab "$temp_cron"; then
+        msg "✅ Автобэкап успешно настроен: $cron_schedule"
+        msg "Логи будут писаться в /var/log/minecraft_backup.log"
+    else
+        error "Не удалось обновить crontab."
+    fi
+    rm -f "$temp_cron"
+}
+
+# Диагностика проблем с подключением
+troubleshoot_server() {
+    msg "--- Диагностика проблем с подключением ---"
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+
+    msg "1. Проверка статуса сервиса..."
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        msg "✅ Сервис '$SERVICE_NAME' активен (running)."
+    else
+        warning "❌ Сервис '$SERVICE_NAME' НЕ активен."
+        sudo systemctl status "$SERVICE_NAME" --no-pager
+    fi
+
+    msg "2. Проверка прослушивания порта $SERVER_PORT..."
+    # Пытаемся найти PID процесса, занимающего порт
+    local busy_pid=""
+    if command -v ss &>/dev/null; then
+        busy_pid=$(sudo ss -ulnp | grep ":$SERVER_PORT " | grep -o 'pid=[0-9]*' | cut -d'=' -f2 | head -n 1)
+    elif command -v lsof &>/dev/null; then
+        busy_pid=$(sudo lsof -i UDP:$SERVER_PORT -t | head -n 1)
+    fi
+
+    if [ -n "$busy_pid" ]; then
+        local proc_name=$(ps -p "$busy_pid" -o comm=)
+        warning "⚠️ Порт $SERVER_PORT занят процессом '$proc_name' (PID: $busy_pid)."
+        msg "Это нормально, если сервер работает. Но если сервер не запускается, этот процесс нужно убить."
+        read -p "Убить процесс $busy_pid ($proc_name)? (yes/no): " KILL_PROC
+        if [[ "$KILL_PROC" == "yes" ]]; then
+            sudo kill -9 "$busy_pid"
+            msg "✅ Процесс убит. Порт должен быть свободен."
+        fi
+    else
+        msg "✅ Порт $SERVER_PORT свободен (никто не слушает)."
+    fi
+
+    msg "3. Проверка фаервола UFW..."
+    if sudo ufw status | grep -q "Status: active"; then
+        msg "✅ UFW активен."
+        if sudo ufw status | grep "$SERVER_PORT/udp" | grep -q "ALLOW"; then
+             msg "✅ Правило для порта $SERVER_PORT/udp найдено (ALLOW)."
+        else
+             warning "❌ Правило для порта $SERVER_PORT/udp НЕ найдено!"
+             read -p "Попробовать добавить правило снова? (yes/no): " FIX_UFW
+             if [[ "$FIX_UFW" == "yes" ]]; then
+                 open_firewall_port "$SERVER_PORT"
+             fi
+        fi
+    else
+        warning "⚠️ UFW не активен. Фаервол выключен (все порты открыты, если нет другого фаервола)."
+    fi
+
+    msg "4. Проверка server.properties..."
+    local props="$DEFAULT_INSTALL_DIR/server.properties"
+    if [ -f "$props" ]; then
+        local bind_ip=$(get_property "server-ip" "$props" "")
+        if [ -n "$bind_ip" ]; then
+            warning "⚠️ В server.properties установлен server-ip=$bind_ip."
+            warning "Если этот IP не принадлежит этому серверу, он не запустится или не будет доступен."
+            read -p "Очистить server-ip (рекомендуется)? (yes/no): " FIX_IP
+            if [[ "$FIX_IP" == "yes" ]]; then
+                set_property "server-ip" "" "$props"
+                msg "server-ip очищен."
+            fi
+        else
+            msg "✅ server-ip не задан (слушает все интерфейсы)."
+        fi
+
+        # Проверка конфликта портов v4/v6
+        local current_port=$(get_property "server-port" "$props" "19132")
+        local current_portv6=$(get_property "server-portv6" "$props" "19133")
+        
+        if [ "$current_port" == "$current_portv6" ]; then
+            warning "⚠️ server-port и server-portv6 совпадают ($current_port)."
+            warning "Это вызывает ошибку 'Port in use' на Linux (конфликт IPv4/IPv6)."
+            read -p "Изменить server-portv6 на $((current_port + 1))? (yes/no): " FIX_V6
+            if [[ "$FIX_V6" == "yes" ]]; then
+                set_property "server-portv6" "$((current_port + 1))" "$props"
+                msg "✅ server-portv6 изменен. Теперь сервер должен запуститься."
+            fi
+        fi
+    else
+        error "❌ Файл server.properties не найден."
+    fi
+
+    msg "5. Тестовый запуск сервера (Debug Run)..."
+    msg "Попытка запустить сервер напрямую, чтобы увидеть ошибки..."
+    
+    # Останавливаем сервис, если он пытается перезапускаться
+    sudo systemctl stop "$SERVICE_NAME" 2>/dev/null
+
+    # Переходим в папку
+    cd "$DEFAULT_INSTALL_DIR" || { error "Не удалось перейти в папку $DEFAULT_INSTALL_DIR"; return 1; }
+
+    # Запускаем с таймаутом 5 секунд, чтобы он не висел вечно, если работает
+    # Используем timeout из coreutils
+    msg "Запуск ./bedrock_server (макс. 5 секунд) от имени $SERVER_USER..."
+    local output
+    output=$(sudo -u "$SERVER_USER" bash -c "cd '$DEFAULT_INSTALL_DIR' && LD_LIBRARY_PATH=. timeout -s 9 5s ./bedrock_server" 2>&1)
+    local exit_code=$?
+
+    echo "---------------------------------------------------"
+    echo "$output"
+    echo "---------------------------------------------------"
+
+    if [ $exit_code -eq 124 ] || [ $exit_code -eq 137 ]; then
+        msg "✅ Сервер запустился и работал 5 секунд (таймаут). Похоже, бинарный файл в порядке."
+        msg "Проблема скорее всего в конфигурации systemd или screen."
+    else
+        warning "❌ Сервер завершил работу с кодом $exit_code."
+        warning "Внимательно изучите вывод выше. Часто не хватает библиотек (libssl)."
+    fi
+    
+    # Восстанавливаем права (на всякий случай)
+    sudo chown -R "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR"
+
+    msg "6. Тестовый запуск через SCREEN..."
+    msg "Проверяем, работает ли screen корректно..."
+    
+    # Пробуем запустить screen с простым sleep
+    local screen_out
+    screen_out=$(sudo -u "$SERVER_USER" /usr/bin/screen -DmS test_screen bash -c 'sleep 3' 2>&1)
+    local screen_ret=$?
+    
+    if [ $screen_ret -eq 0 ]; then
+        msg "✅ Screen работает корректно (тестовая команда sleep выполнена)."
+    else
+        warning "❌ Ошибка запуска screen! Код возврата: $screen_ret"
+        echo "Вывод screen: $screen_out"
+        warning "Возможно, проблема в правах доступа к /run/screen."
+        
+        # Пытаемся исправить права
+        if [ -d "/run/screen" ]; then
+             msg "Попытка исправить права на /run/screen..."
+             sudo chmod 1777 /run/screen
+             msg "Права исправлены. Попробуйте запустить сервер снова."
+        fi
+    fi
+
+    msg "7. Полная симуляция запуска (Screen + Server)..."
+    msg "Запускаем сервер через screen с логированием, чтобы понять причину падения..."
+    
+    local debug_log="/tmp/bds_debug.log"
+    rm -f "$debug_log"
+    
+    # Запускаем на 5 секунд
+    # Используем timeout, чтобы убить screen, если он все-таки запустится
+    sudo -u "$SERVER_USER" timeout -s 9 5s /usr/bin/screen -DmS test_bds -L -Logfile "$debug_log" bash -c "cd '$DEFAULT_INSTALL_DIR' && LD_LIBRARY_PATH=. ./bedrock_server"
+    
+    if [ -f "$debug_log" ]; then
+        msg "Лог запуска внутри screen:"
+        echo "---------------------------------------------------"
+        cat "$debug_log"
+        echo "---------------------------------------------------"
+        if grep -q "Server started" "$debug_log"; then
+             msg "✅ Судя по логу, сервер запускается корректно."
+        else
+             warning "❌ В логе нет сообщения о старте. Изучите ошибки выше."
+        fi
+    else
+        warning "❌ Лог файл не создан. Screen не запустился или упал мгновенно."
+    fi
+
+    msg "--- Диагностика завершена ---"
+    read -p "Нажмите Enter..." DUMMY
+}
+
 # --- Обработка аргументов командной строки (для автобэкапа) ---
 handle_command_args() {
     if [ "$1" == "--auto-backup" ]; then
@@ -2335,6 +2986,7 @@ while true; do
     echo "12. Создать Архив Миграции (все серверы)"
     echo "13. Восстановить из Архива Миграции"
     echo "14. УДАЛИТЬ ВСЕ СЕРВЕРЫ И ДАННЫЕ"
+    echo "15. Диагностика проблем с подключением"
     echo " 0. Выход"
     echo "======================================================================"
 
@@ -2343,7 +2995,7 @@ while true; do
     read -p "Выберите опцию: " choice
 
     # Блокируем опции, требующие активного сервера
-    if [ -z "$ACTIVE_SERVER_ID" ] && [[ "$choice" =~ ^[2-7]$|^9$ ]]; then
+    if [ -z "$ACTIVE_SERVER_ID" ] && [[ "$choice" =~ ^[2-7]$|^9$|^15$ ]]; then
         warning "Сначала выберите активный сервер (опция 8 -> 2)."
         read -p "Нажмите Enter для продолжения..." DUMMY_VAR
         continue # Возвращаемся к началу цикла while
@@ -2391,6 +3043,7 @@ while true; do
         12) create_migration_archive ;; # Не требует активного
         13) restore_from_migration_archive ;; # Не требует активного
         14) wipe_all_servers ;;
+        15) troubleshoot_server ;;
         0) msg "Выход."; exit 0 ;;
         *) msg "Неверная опция. Попробуйте снова." ;;
     esac
