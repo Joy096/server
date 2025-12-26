@@ -1130,17 +1130,23 @@ change_gamerule_text() {
 # Главное меню настроек
 configure_menu() {
     ensure_whiptail
-    if ! is_server_installed; then error "Сервер не установлен."; return 1; fi
+    if ! is_server_installed; then 
+        whiptail --msgbox "❌ Сервер не установлен.\n\nСначала установите сервер через опцию 1 в главном меню." 10 60
+        return 1
+    fi
     local CONFIG_FILE="$DEFAULT_INSTALL_DIR/server.properties"
+    
+    # Получаем имя сервера для отображения
+    local server_name=$(get_property "server-name" "$CONFIG_FILE" "$ACTIVE_SERVER_ID")
 
     while true; do
-        local choice=$(whiptail --title "Настройки Сервера ($ACTIVE_SERVER_ID)" --menu "Выберите раздел:" 20 78 10 \
-            "1" "⚙️ Общие (Режим, Сложность, Имя)" \
-            "2" "📜 Дополнительно (Сид, Тип мира, Правила)" \
-            "3" "🌐 Игра по сети (Порт, Игроки, Whitelist)" \
-            "4" "🛠️ Читы (Gamerules, Командные блоки)" \
-            "5" "🔍 Другие настройки (Авто-поиск)" \
-            "0" "Назад" 3>&1 1>&2 2>&3)
+        local choice=$(whiptail --title "⚙️ Настройки Сервера" --menu "Сервер: $server_name (ID: $ACTIVE_SERVER_ID)\n\nВыберите раздел настроек:" 20 78 10 \
+            "1" "⚙️  Общие (Имя, Режим, Сложность)" \
+            "2" "📜 Дополнительно (Мир, Правила, Права)" \
+            "3" "🌐 Сеть (Игроки, Whitelist, PvP)" \
+            "4" "🛠️  Читы (Команды, Gamerules)" \
+            "5" "🔍 Другие настройки" \
+            "0" " ← Назад в главное меню" 3>&1 1>&2 2>&3)
         
         if [ $? -ne 0 ]; then return 0; fi
 
@@ -1158,11 +1164,19 @@ configure_menu() {
 configure_general_settings() {
     local f="$DEFAULT_INSTALL_DIR/server.properties"
     while true; do
-        local choice=$(whiptail --title "Общие Настройки" --menu "Выберите опцию:" 20 78 10 \
-            "server-name" "Имя сервера [$(get_property "server-name" "$f" "?")]" \
-            "gamemode" "Режим игры [$(get_property "gamemode" "$f" "?")]" \
-            "difficulty" "Сложность [$(get_property "difficulty" "$f" "?")]" \
-            "0" "Назад" 3>&1 1>&2 2>&3)
+        local server_name=$(fmt_value "$(get_property "server-name" "$f" "не задано")" 25)
+        local gamemode_raw=$(get_property "gamemode" "$f" "survival")
+        local difficulty_raw=$(get_property "difficulty" "$f" "easy")
+        local gamemode=$(display_ru "gamemode" "$gamemode_raw")
+        local difficulty=$(display_ru "difficulty" "$difficulty_raw")
+        local hardcore=$(fmt_bool "$(get_property "hardcore" "$f" "false")")
+        
+        local choice=$(whiptail --title "⚙️ Общие Настройки" --menu "Выберите параметр для изменения:" 18 78 8 \
+            "server-name" "Имя сервера: $server_name" \
+            "gamemode" "Режим игры: $gamemode" \
+            "difficulty" "Сложность: $difficulty" \
+            "hardcore" "Хардкор: $hardcore" \
+            "0" "← Назад" 3>&1 1>&2 2>&3)
             
         if [ $? -ne 0 ]; then return; fi
 
@@ -1170,6 +1184,28 @@ configure_general_settings() {
             server-name) input_prop "server-name" "$f" "Имя сервера" ;;
             gamemode) select_prop "gamemode" "$f" "Режим игры" "survival" "creative" "adventure" ;;
             difficulty) select_prop "difficulty" "$f" "Сложность" "peaceful" "easy" "normal" "hard" ;;
+            hardcore) 
+                local desc=$(get_setting_description "hardcore")
+                local current=$(get_property "hardcore" "$f" "false")
+                
+                # Определяем текущее состояние для radiolist
+                local true_status="OFF"
+                local false_status="OFF"
+                if [[ "${current,,}" == "true" ]]; then
+                    true_status="ON"
+                else
+                    false_status="ON"
+                fi
+                
+                local choice_hc=$(whiptail --title "Хардкор" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$true_status" \
+                    "false" "Выключить" "$false_status" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_hc" ]; then
+                    if ! set_property "hardcore" "$choice_hc" "$f"; then
+                        whiptail --msgbox "❌ Ошибка при изменении настройки!" 8 50
+                    fi
+                fi
+                ;;
             0) return ;;
         esac
     done
@@ -1178,39 +1214,244 @@ configure_general_settings() {
 configure_advanced_settings() {
     local f="$DEFAULT_INSTALL_DIR/server.properties"
     while true; do
-        local choice=$(whiptail --title "Дополнительно" --menu "Выберите опцию:" 22 78 12 \
-            "level-seed" "Сид мира [$(get_property "level-seed" "$f" "")]" \
-            "level-type" "Тип мира [$(get_property "level-type" "$f" "DEFAULT")]" \
-            "simulation-distance" "Дистанция симуляции [$(get_property "simulation-distance" "$f" "8")]" \
-            "spawn-radius" "Радиус спавна [$(get_property "spawn-radius" "$f" "10")]" \
-            "default-player-permission-level" "Права [$(get_property "default-player-permission-level" "$f" "member")]" \
-            "GAMERULES" "--- Правила мира (Gamerules) ---" \
-            "showcoordinates" "Показать координаты" \
-            "dofiretick" "Распространение огня" \
-            "tntexplodes" "Взрыв динамита" \
-            "doimmediaterespawn" "Мгновенное возрождение" \
-            "respawnblocksexplode" "Взрыв блоков возрождения" \
-            "recipesunlock" "Разблокировка рецептов" \
-            "playerssleepingpercentage" "Процент спящих игроков" \
-            "naturalregeneration" "Естественная регенерация" \
-            "dotiledrops" "Выпадение предметов из блоков" \
-            "0" "Назад" 3>&1 1>&2 2>&3)
+        local level_type_raw=$(get_property "level-type" "$f" "DEFAULT")
+        local is_flat="false"
+        if [[ "$level_type_raw" == "FLAT" ]]; then is_flat="true"; fi
+        local level_type_disp=$(fmt_bool "$is_flat")
+
+        local start_with_map=$(fmt_bool "$(get_property "start-with-map" "$f" "false")")
+        local bonus_chest=$(fmt_bool "$(get_property "bonus-chest" "$f" "false")")
+        local show_coords=$(fmt_bool "$(get_property "showcoordinates" "$f" "false")")
+        local show_days=$(fmt_bool "$(get_property "showdayspassed" "$f" "false")")
+        local recipes_unlock=$(fmt_bool "$(get_property "recipesunlock" "$f" "true")")
+        local fire_tick=$(fmt_bool "$(get_property "dofiretick" "$f" "true")")
+        local tnt_explodes=$(fmt_bool "$(get_property "tntexplodes" "$f" "true")")
+        local mob_loot=$(fmt_bool "$(get_property "doentitydrops" "$f" "true")")
+        local natural_regen=$(fmt_bool "$(get_property "naturalregeneration" "$f" "true")")
+        local tile_drops=$(fmt_bool "$(get_property "dotiledrops" "$f" "true")")
+        local instant_respawn=$(fmt_bool "$(get_property "doimmediaterespawn" "$f" "false")")
+        local respawn_explode=$(fmt_bool "$(get_property "respawnblocksexplode" "$f" "false")")
+        local sleep_pct=$(get_property "playerssleepingpercentage" "$f" "100")
+        local sim_dist=$(get_property "simulation-distance" "$f" "8")
+        local spawn_rad=$(get_property "spawn-radius" "$f" "10")
+        local perms_raw=$(get_property "default-player-permission-level" "$f" "member")
+        local perms_disp=$(display_ru "default-player-permission-level" "$perms_raw")
+        
+        local choice=$(whiptail --title "📜 Дополнительные Настройки" --menu "Выберите параметр:" 22 80 12 \
+            "level-type" "Плоский мир: $level_type_disp" \
+            "start-with-map" "Начальная карта: $start_with_map" \
+            "bonus-chest" "Бонусный сундук: $bonus_chest" \
+            "showcoordinates" "Показать координаты: $show_coords" \
+            "showdayspassed" "Показать количество прошедших дней: $show_days" \
+            "recipesunlock" "Разблокировка рецептов: $recipes_unlock" \
+            "dofiretick" "Распространение огня: $fire_tick" \
+            "tntexplodes" "Детонация динамита: $tnt_explodes" \
+            "doentitydrops" "Добыча из мобов: $mob_loot" \
+            "naturalregeneration" "Естественная регенерация: $natural_regen" \
+            "dotiledrops" "Выпадение предметов из блоков: $tile_drops" \
+            "playerssleepingpercentage" "Необходимы спящие игроки: $sleep_pct%" \
+            "doimmediaterespawn" "Мгновенное возрождение: $instant_respawn" \
+            "respawnblocksexplode" "Возрождающиеся блоки взрываются: $respawn_explode" \
+            "simulation-distance" "Дистанция моделирования: $sim_dist" \
+            "spawn-radius" "Радиус возрождения: $spawn_rad" \
+            "default-player-permission-level" "Разрешения игрока по умолчанию: $perms_disp" \
+            "0" "← Назад" 3>&1 1>&2 2>&3)
 
         if [ $? -ne 0 ]; then return; fi
 
         case $choice in
-            level-seed) input_prop "level-seed" "$f" "Сид" ;;
-            level-type) select_prop "level-type" "$f" "Тип мира" "DEFAULT" "FLAT" "LEGACY" ;;
-            simulation-distance) input_prop "simulation-distance" "$f" "Дистанция симуляции" ;;
-            spawn-radius) input_prop "spawn-radius" "$f" "Радиус спавна" ;;
-            default-player-permission-level) select_prop "default-player-permission-level" "$f" "Права" "visitor" "member" "operator" ;;
-            GAMERULES) ;;
-            playerssleepingpercentage) 
-                 local val=$(whiptail --inputbox "Процент спящих (0-100):" 10 60 3>&1 1>&2 2>&3)
-                 if [ -n "$val" ]; then menu_gamerule_cmd "playerssleepingpercentage" "$val"; fi
-                 ;;
+            level-type)
+                local desc=$(get_setting_description "level-type")
+                local state_flat="OFF"; local state_default="OFF"
+                if [[ "$is_flat" == "true" ]]; then state_flat="ON"; else state_default="ON"; fi
+                local choice_lt=$(whiptail --title "Плоский мир" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "FLAT" "Включить" "$state_flat" \
+                    "DEFAULT" "Выключить" "$state_default" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_lt" ]; then
+                    set_property "level-type" "$choice_lt" "$f"
+                fi
+                ;;
+            start-with-map)
+                local desc=$(get_setting_description "start-with-map")
+                local cur=$(get_property "start-with-map" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_sw=$(whiptail --title "Начальная карта" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_sw" ]; then
+                    set_property "start-with-map" "$choice_sw" "$f"
+                fi
+                ;;
+            bonus-chest)
+                local desc=$(get_setting_description "bonus-chest")
+                local cur=$(get_property "bonus-chest" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_bc=$(whiptail --title "Бонусный сундук" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_bc" ]; then
+                    set_property "bonus-chest" "$choice_bc" "$f"
+                fi
+                ;;
+            showcoordinates)
+                local desc=$(get_setting_description "showcoordinates")
+                local cur=$(get_property "showcoordinates" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_sc=$(whiptail --title "Показать координаты" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_sc" ]; then
+                    set_property "showcoordinates" "$choice_sc" "$f"
+                fi
+                ;;
+            showdayspassed)
+                local desc=$(get_setting_description "showdayspassed")
+                local cur=$(get_property "showdayspassed" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_sdp=$(whiptail --title "Показать прошедшие дни" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_sdp" ]; then
+                    set_property "showdayspassed" "$choice_sdp" "$f"
+                fi
+                ;;
+            recipesunlock)
+                local desc=$(get_setting_description "recipesunlock")
+                local cur=$(get_property "recipesunlock" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_ru=$(whiptail --title "Разблокировка рецептов" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ru" ]; then
+                    set_property "recipesunlock" "$choice_ru" "$f"
+                fi
+                ;;
+            dofiretick)
+                local desc=$(get_setting_description "dofiretick")
+                local cur=$(get_property "dofiretick" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_ft=$(whiptail --title "Распространение огня" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ft" ]; then
+                    set_property "dofiretick" "$choice_ft" "$f"
+                fi
+                ;;
+            tntexplodes)
+                local desc=$(get_setting_description "tntexplodes")
+                local cur=$(get_property "tntexplodes" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_tnt=$(whiptail --title "Детонация динамита" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_tnt" ]; then
+                    set_property "tntexplodes" "$choice_tnt" "$f"
+                fi
+                ;;
+            doentitydrops)
+                local desc=$(get_setting_description "doentitydrops")
+                local cur=$(get_property "doentitydrops" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_ed=$(whiptail --title "Добыча из мобов" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ed" ]; then
+                    set_property "doentitydrops" "$choice_ed" "$f"
+                fi
+                ;;
+            naturalregeneration)
+                local desc=$(get_setting_description "naturalregeneration")
+                local cur=$(get_property "naturalregeneration" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_nr=$(whiptail --title "Естественная регенерация" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_nr" ]; then
+                    set_property "naturalregeneration" "$choice_nr" "$f"
+                fi
+                ;;
+            dotiledrops)
+                local desc=$(get_setting_description "dotiledrops")
+                local cur=$(get_property "dotiledrops" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_td=$(whiptail --title "Выпадение предметов из блоков" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_td" ]; then
+                    set_property "dotiledrops" "$choice_td" "$f"
+                fi
+                ;;
+            playerssleepingpercentage)
+                local desc=$(get_setting_description "playerssleepingpercentage")
+                local current=$(get_property "playerssleepingpercentage" "$f" "100")
+                local val=$(whiptail --inputbox "Необходимы спящие игроки (0-100):\n\n$desc\n\nТекущее значение: $current" 14 70 "$current" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$val" ]; then
+                    if validate_number "$val" "0" "100"; then
+                        set_property "playerssleepingpercentage" "$val" "$f"
+                    else
+                        whiptail --msgbox "❌ Неверное значение! Должно быть от 0 до 100" 8 50
+                    fi
+                fi
+                ;;
+            doimmediaterespawn)
+                local desc=$(get_setting_description "doimmediaterespawn")
+                local cur=$(get_property "doimmediaterespawn" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_ir=$(whiptail --title "Мгновенное возрождение" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ir" ]; then
+                    set_property "doimmediaterespawn" "$choice_ir" "$f"
+                fi
+                ;;
+            respawnblocksexplode)
+                local desc=$(get_setting_description "respawnblocksexplode")
+                local cur=$(get_property "respawnblocksexplode" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_rb=$(whiptail --title "Возрождающиеся блоки взрываются" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_rb" ]; then
+                    set_property "respawnblocksexplode" "$choice_rb" "$f"
+                fi
+                ;;
+            simulation-distance) 
+                local desc=$(get_setting_description "simulation-distance")
+                local current=$(get_property "simulation-distance" "$f" "8")
+                local sim4="OFF"; local sim6="OFF"; local sim8="OFF"
+                case "$current" in
+                    4) sim4="ON" ;;
+                    6) sim6="ON" ;;
+                    *) sim8="ON" ;; # по умолчанию 8
+                esac
+                local choice_sim=$(whiptail --title "Дистанция моделирования" --radiolist "$desc\n\nТекущее значение: $current фрагментов\n\nВыберите значение:" 20 80 3 \
+                    "4" "Фрагментов: 4" "$sim4" \
+                    "6" "Фрагментов: 6" "$sim6" \
+                    "8" "Фрагментов: 8" "$sim8" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_sim" ]; then
+                    set_property "simulation-distance" "$choice_sim" "$f"
+                fi
+                ;;
+            spawn-radius)
+                local desc=$(get_setting_description "spawn-radius")
+                local current=$(get_property "spawn-radius" "$f" "10")
+                local sr0="OFF"; local sr64="OFF"; local sr128="OFF"
+                case "$current" in
+                    0) sr0="ON" ;;
+                    64) sr64="ON" ;;
+                    128) sr128="ON" ;;
+                    *) sr64="ON" ;;
+                esac
+                local choice_sr=$(whiptail --title "Радиус возрождения" --radiolist "$desc\n\nТекущее значение: $current\n\nВыберите значение:" 20 80 3 \
+                    "0" "0" "$sr0" \
+                    "64" "64" "$sr64" \
+                    "128" "128" "$sr128" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_sr" ]; then
+                    set_property "spawn-radius" "$choice_sr" "$f"
+                fi
+                ;;
+            default-player-permission-level) select_prop "default-player-permission-level" "$f" "Разрешения игрока по умолчанию" "visitor" "member" "operator" ;;
             0) return ;;
-            *) menu_gamerule "$choice" "Правило $choice" ;;
         esac
     done
 }
@@ -1218,22 +1459,109 @@ configure_advanced_settings() {
 configure_network_settings() {
     local f="$DEFAULT_INSTALL_DIR/server.properties"
     while true; do
-        local choice=$(whiptail --title "Игра по сети" --menu "Выберите опцию:" 20 78 10 \
-            "max-players" "Макс. игроков [$(get_property "max-players" "$f" "10")]" \
-            "online-mode" "Online Mode (Лицензия) [$(fmt_bool $(get_property "online-mode" "$f" "true"))]" \
-            "white-list" "White List [$(fmt_bool $(get_property "white-list" "$f" "false"))]" \
-            "pvp" "PvP (Огонь по своим) [$(fmt_bool $(get_property "pvp" "$f" "true"))]" \
-            "view-distance" "Прорисовка [$(get_property "view-distance" "$f" "32")]" \
-            "0" "Назад" 3>&1 1>&2 2>&3)
+        local multiplayer=$(fmt_bool "$(get_property "multiplayer" "$f" "true")")
+        local mp_on=$(get_property "multiplayer" "$f" "true")
+
+        local access_raw="invited"
+        local access_disp="недоступно"
+        local perms_raw="member"
+        local perms_disp="недоступно"
+        if [[ "${mp_on,,}" == "true" ]]; then
+            access_raw=$(get_property "player-access" "$f" "invited")
+            access_disp=$(display_ru "player-access" "$access_raw")
+            perms_raw=$(get_property "default-player-permission-level" "$f" "member")
+            perms_disp=$(display_ru "default-player-permission-level" "$perms_raw")
+        fi
+
+        local visible_lan=$(fmt_bool "$(get_property "visible-lan" "$f" "true")")
+        local pvp=$(fmt_bool "$(get_property "pvp" "$f" "true")")
+        local locator=$(fmt_bool "$(get_property "locator-panel" "$f" "true")")
+
+        # Динамически собираем меню, чтобы скрывать пункты при выключенном мультиплеере
+        local menu_items=(
+            "multiplayer" "Многопользовательская игра: $multiplayer"
+        )
+        if [[ "${mp_on,,}" == "true" ]]; then
+            menu_items+=(
+                "player-access" "Доступ игрока: $access_disp"
+                "default-player-permission-level" "Разрешения по умолчанию: $perms_disp"
+            )
+        fi
+        menu_items+=(
+            "visible-lan" "Видят игроки в локальной сети: $visible_lan"
+            "pvp" "Огонь по своим: $pvp"
+            "locator-panel" "Панель локатора: $locator"
+            "0" "← Назад"
+        )
+
+        local choice=$(whiptail --title "🌐 Игра по сети" --menu "Выберите параметр:" 22 80 10 "${menu_items[@]}" 3>&1 1>&2 2>&3)
 
         if [ $? -ne 0 ]; then return; fi
 
         case $choice in
-            max-players) input_prop "max-players" "$f" "Макс. игроков" ;;
-            online-mode) toggle_prop "online-mode" "$f" ;;
-            white-list) toggle_prop "white-list" "$f" ;;
+            multiplayer)
+                local desc=$(get_setting_description "multiplayer")
+                local cur=$(get_property "multiplayer" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_mp=$(whiptail --title "Многопользовательская игра" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_mp" ]; then
+                    set_property "multiplayer" "$choice_mp" "$f"
+                fi
+                ;;
+            player-access)
+                local mp_cur=$(get_property "multiplayer" "$f" "true")
+                if [[ "${mp_cur,,}" != "true" ]]; then
+                    whiptail --msgbox "Включите «Многопользовательская игра», чтобы настроить доступ." 10 60
+                    continue
+                fi
+                local desc=$(get_setting_description "player-access")
+                local acc_inv="OFF"; local acc_fr="OFF"; local acc_fof="OFF"
+                case "$access_raw" in
+                    friends) acc_fr="ON" ;;
+                    friends-of-friends) acc_fof="ON" ;;
+                    *) acc_inv="ON" ;;
+                esac
+                local choice_pa=$(whiptail --title "Доступ игрока" --radiolist "$desc\n\nТекущее: $access_disp\n\nВыберите вариант:" 20 80 3 \
+                    "invited" "Приглашенные" "$acc_inv" \
+                    "friends" "Друзья" "$acc_fr" \
+                    "friends-of-friends" "Друзья друзей" "$acc_fof" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_pa" ]; then
+                    set_property "player-access" "$choice_pa" "$f"
+                fi
+                ;;
+            default-player-permission-level)
+                local mp_cur=$(get_property "multiplayer" "$f" "true")
+                if [[ "${mp_cur,,}" != "true" ]]; then
+                    whiptail --msgbox "Включите «Многопользовательская игра», чтобы настроить разрешения." 10 60
+                    continue
+                fi
+                select_prop "default-player-permission-level" "$f" "Разрешения игрока по умолчанию" "visitor" "member" "operator"
+                ;;
+            visible-lan)
+                local desc=$(get_setting_description "visible-lan")
+                local cur=$(get_property "visible-lan" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_lan=$(whiptail --title "Видят игроки в локальной сети" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_lan" ]; then
+                    set_property "visible-lan" "$choice_lan" "$f"
+                fi
+                ;;
             pvp) toggle_prop "pvp" "$f" ;;
-            view-distance) input_prop "view-distance" "$f" "Прорисовка" ;;
+            locator-panel)
+                local desc=$(get_setting_description "locator-panel")
+                local cur=$(get_property "locator-panel" "$f" "true")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_loc=$(whiptail --title "Панель локатора" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_loc" ]; then
+                    set_property "locator-panel" "$choice_loc" "$f"
+                fi
+                ;;
             0) return ;;
         esac
     done
@@ -1242,32 +1570,129 @@ configure_network_settings() {
 configure_cheats_settings() {
     local f="$DEFAULT_INSTALL_DIR/server.properties"
     while true; do
-        local choice=$(whiptail --title "Читы" --menu "Выберите опцию:" 22 78 12 \
-            "allow-cheats" "Разрешить читы [$(fmt_bool $(get_property "allow-cheats" "$f" "false"))]" \
-            "enable-command-blocks" "Командные блоки [$(fmt_bool $(get_property "enable-command-blocks" "$f" "false"))]" \
-            "GAMERULES" "--- Правила (Gamerules) ---" \
-            "dodaylightcycle" "Смена дня/ночи" \
-            "keepinventory" "Сохранение инвентаря" \
-            "domobspawning" "Спавн мобов" \
-            "mobgriefing" "Разрушение мобами" \
-            "doweathercycle" "Смена погоды" \
-            "doentitydrops" "Выпадение добычи из сущностей" \
-            "commandblockoutput" "Вывод командных блоков" \
-            "randomtickspeed" "Случайная скорость такта" \
-            "0" "Назад" 3>&1 1>&2 2>&3)
+        local allow_cheats_val=$(get_property "allow-cheats" "$f" "false")
+        local allow_cheats=$(fmt_bool "$allow_cheats_val")
+        local cmd_blocks=$(fmt_bool "$(get_property "enable-command-blocks" "$f" "false")")
+        local day_night=$(fmt_bool "$(get_property "dodaylightcycle" "$f" "true")")
+        local keep_inv=$(fmt_bool "$(get_property "keepinventory" "$f" "false")")
+        local mob_spawn=$(fmt_bool "$(get_property "domobspawning" "$f" "true")")
+        local mob_grief=$(fmt_bool "$(get_property "mobgriefing" "$f" "true")")
+        local weather=$(fmt_bool "$(get_property "doweathercycle" "$f" "true")")
+        local entity_drops=$(fmt_bool "$(get_property "doentitydrops" "$f" "true")")
+        local cmd_output=$(fmt_bool "$(get_property "commandblockoutput" "$f" "true")")
+        
+        # Меню строим динамически: если читы выключены, скрываем остальные пункты
+        local menu_items=(
+            "allow-cheats" "Разрешить читы: $allow_cheats"
+        )
+        if [[ "${allow_cheats_val,,}" == "true" ]]; then
+            menu_items+=(
+                "enable-command-blocks" "Командные блоки: $cmd_blocks"
+                "dodaylightcycle" "Смена дня и ночи: $day_night"
+                "keepinventory" "Сохранять инвентарь: $keep_inv"
+                "domobspawning" "Создание мобов: $mob_spawn"
+                "mobgriefing" "Вредительство мобов: $mob_grief"
+                "doweathercycle" "Смена погоды: $weather"
+                "doentitydrops" "Выпадение добычи из сущностей: $entity_drops"
+                "commandblockoutput" "Вывод командных блоков: $cmd_output"
+            )
+        fi
+        menu_items+=("0" "← Назад")
+
+        local choice=$(whiptail --title "🛠️ Читы и Команды" --menu "Выберите параметр:" 24 80 14 "${menu_items[@]}" 3>&1 1>&2 2>&3)
 
         if [ $? -ne 0 ]; then return; fi
 
         case $choice in
-            allow-cheats) toggle_prop "allow-cheats" "$f" ;;
-            enable-command-blocks) toggle_prop "enable-command-blocks" "$f" ;;
-            GAMERULES) ;;
-            randomtickspeed)
-                 local val=$(whiptail --inputbox "Скорость такта (def: 1):" 10 60 3>&1 1>&2 2>&3)
-                 if [ -n "$val" ]; then menu_gamerule_cmd "randomtickspeed" "$val"; fi
-                 ;;
+            allow-cheats)
+                local desc=$(get_setting_description "allow-cheats")
+                local cur=$(get_property "allow-cheats" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_ac=$(whiptail --title "Разрешить читы" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ac" ]; then
+                    set_property "allow-cheats" "$choice_ac" "$f"
+                fi
+                ;;
+            enable-command-blocks)
+                local desc=$(get_setting_description "enable-command-blocks")
+                local cur=$(get_property "enable-command-blocks" "$f" "false")
+                local on="OFF"; local off="OFF"; if [[ "${cur,,}" == "true" ]]; then on="ON"; else off="ON"; fi
+                local choice_cb=$(whiptail --title "Командные блоки" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_cb" ]; then
+                    set_property "enable-command-blocks" "$choice_cb" "$f"
+                fi
+                ;;
+            dodaylightcycle)
+                local desc=$(get_setting_description "dodaylightcycle")
+                local cur="true"
+                local on="ON"; local off="OFF"
+                local choice_gc=$(whiptail --title "Смена дня и ночи" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_gc" ]; then
+                    menu_gamerule_cmd "dodaylightcycle" "$choice_gc"
+                fi
+                ;;
+            keepinventory)
+                local desc=$(get_setting_description "keepinventory")
+                local on="OFF"; local off="ON"
+                local choice_ki=$(whiptail --title "Сохранять инвентарь" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "$on" \
+                    "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ki" ]; then
+                    menu_gamerule_cmd "keepinventory" "$choice_ki"
+                fi
+                ;;
+            domobspawning)
+                local desc=$(get_setting_description "domobspawning")
+                local choice_ms=$(whiptail --title "Создание мобов" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "ON" \
+                    "false" "Выключить" "OFF" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ms" ]; then
+                    menu_gamerule_cmd "domobspawning" "$choice_ms"
+                fi
+                ;;
+            mobgriefing)
+                local desc=$(get_setting_description "mobgriefing")
+                local choice_mg=$(whiptail --title "Вредительство мобов" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "ON" \
+                    "false" "Выключить" "OFF" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_mg" ]; then
+                    menu_gamerule_cmd "mobgriefing" "$choice_mg"
+                fi
+                ;;
+            doweathercycle)
+                local desc=$(get_setting_description "doweathercycle")
+                local choice_wc=$(whiptail --title "Смена погоды" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "ON" \
+                    "false" "Выключить" "OFF" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_wc" ]; then
+                    menu_gamerule_cmd "doweathercycle" "$choice_wc"
+                fi
+                ;;
+            doentitydrops)
+                local desc=$(get_setting_description "doentitydrops")
+                local choice_ed=$(whiptail --title "Выпадение добычи" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "ON" \
+                    "false" "Выключить" "OFF" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_ed" ]; then
+                    menu_gamerule_cmd "doentitydrops" "$choice_ed"
+                fi
+                ;;
+            commandblockoutput)
+                local desc=$(get_setting_description "commandblockoutput")
+                local choice_cbo=$(whiptail --title "Вывод командных блоков" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
+                    "true" "Включить" "ON" \
+                    "false" "Выключить" "OFF" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$choice_cbo" ]; then
+                    menu_gamerule_cmd "commandblockoutput" "$choice_cbo"
+                fi
+                ;;
             0) return ;;
-            *) menu_gamerule "$choice" "Правило $choice" ;;
         esac
     done
 }
@@ -1278,19 +1703,23 @@ configure_other_settings() {
     local known="server-name|gamemode|difficulty|level-seed|level-type|simulation-distance|spawn-radius|default-player-permission-level|max-players|online-mode|white-list|pvp|view-distance|allow-cheats|enable-command-blocks|server-port|server-portv6|server-ip"
     
     # Ищем ключи, которых нет в known
-    local others=($(grep -vE "^#|^$|($known)=" "$f" | cut -d'=' -f1))
+    local others=($(grep -vE "^#|^$|($known)=" "$f" | cut -d'=' -f1 | sort))
     
-    if [ ${#others[@]} -eq 0 ]; then whiptail --msgbox "Нет других настроек." 10 60; return; fi
+    if [ ${#others[@]} -eq 0 ]; then 
+        whiptail --msgbox "✅ Все настройки уже доступны в других разделах.\n\nНет дополнительных параметров для редактирования." 10 60
+        return
+    fi
     
-    local menu_items=()
+    local menu_items=("0" "← Назад")
     for key in "${others[@]}"; do
         local val=$(get_property "$key" "$f" "")
-        menu_items+=("$key" "$val")
+        local display_val=$(fmt_value "$val" 30)
+        menu_items+=("$key" "$key = $display_val")
     done
     
-    local choice=$(whiptail --title "Другие настройки" --menu "Выберите параметр:" 20 78 10 "${menu_items[@]}" 3>&1 1>&2 2>&3)
+    local choice=$(whiptail --title "🔍 Другие настройки" --menu "Выберите параметр для редактирования:" 20 80 12 "${menu_items[@]}" 3>&1 1>&2 2>&3)
     
-    if [ $? -eq 0 ]; then
+    if [ $? -eq 0 ] && [ "$choice" != "0" ]; then
         input_prop "$choice" "$f" "$choice"
     fi
 }
@@ -1299,8 +1728,17 @@ configure_other_settings() {
 menu_gamerule_cmd() {
     local rule="$1"; local val="$2"
     local screen_name=${SERVICE_NAME%.service}
-    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-        sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $val^M"
+    
+    if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        whiptail --msgbox "⚠️ Сервер не запущен.\n\nПравило '$rule' можно изменить только когда сервер работает." 10 60
+        return 1
+    fi
+    
+    if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $val^M" 2>/dev/null; then
+        return 0
+    else
+        whiptail --msgbox "❌ Ошибка при отправке команды серверу!" 8 50
+        return 1
     fi
 }
 
@@ -1313,7 +1751,224 @@ ensure_whiptail() {
 
 # Helper to format boolean for menu
 fmt_bool() {
-    if [[ "$1" == "true" ]]; then echo "[ВКЛ]"; else echo "[ВЫКЛ]"; fi
+    local val="${1,,}"  # Приводим к нижнему регистру
+    if [[ "$val" == "true" || "$val" == "1" ]]; then echo "ВКЛ"; else echo "ВЫКЛ"; fi
+}
+
+# Helper to format value for menu display (truncate long values)
+fmt_value() {
+    local val="$1"
+    local max_len="${2:-20}"  # По умолчанию 20 символов
+    if [ ${#val} -gt $max_len ]; then
+        echo "${val:0:$((max_len-3))}..."
+    else
+        echo "$val"
+    fi
+}
+
+# Helper to get display name in Russian for known keys/values
+display_ru() {
+    local key="$1"; local val="$2"
+    case "$key" in
+        gamemode)
+            case "$val" in
+                survival) echo "Выживание" ;;
+                creative) echo "Творческий" ;;
+                adventure) echo "Приключение" ;;
+                *) echo "$val" ;;
+            esac
+            ;;
+        difficulty)
+            case "$val" in
+                peaceful) echo "Мирный" ;;
+                easy) echo "Легкий" ;;
+                normal) echo "Обычный" ;;
+                hard) echo "Сложный" ;;
+                *) echo "$val" ;;
+            esac
+            ;;
+        default-player-permission-level)
+            case "$val" in
+                visitor) echo "Посетитель" ;;
+                member) echo "Участник" ;;
+                operator) echo "Оператор" ;;
+                *) echo "$val" ;;
+            esac
+            ;;
+        player-access)
+            case "$val" in
+                invited) echo "Приглашенные" ;;
+                friends) echo "Друзья" ;;
+                friends-of-friends) echo "Друзья друзей" ;;
+                *) echo "$val" ;;
+            esac
+            ;;
+        multiplayer)
+            case "$val" in
+                true) echo "ВКЛ" ;;
+                false) echo "ВЫКЛ" ;;
+                *) echo "$val" ;;
+            esac
+            ;;
+        showdayspassed)
+            case "$val" in
+                true) echo "ВКЛ" ;;
+                false) echo "ВЫКЛ" ;;
+                *) echo "$val" ;;
+            esac
+            ;;
+        *) echo "$val" ;;
+    esac
+}
+
+
+# Helper to validate number
+validate_number() {
+    local num="$1"
+    local min="${2:-0}"
+    local max="${3:-2147483647}"
+    
+    # Проверяем, что это число
+    if ! [[ "$num" =~ ^[0-9]+$ ]]; then
+        return 1
+    fi
+    
+    # Проверяем диапазон
+    if [ "$num" -lt "$min" ] || [ "$num" -gt "$max" ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Helper to get setting description (как на скриншотах)
+get_setting_description() {
+    local key="$1"
+    case "$key" in
+        "server-name")
+            echo "Название вашего сервера, которое видят игроки при подключении"
+            ;;
+        "gamemode")
+            echo "Режим игры определяет возможности игроков:\n• Выживание: исследуйте мир, собирайте ресурсы, сражайтесь\n• Творческий: неограниченные ресурсы, полет, неуязвимость\n• Приключение: как выживание, но нельзя ломать блоки"
+            ;;
+        "difficulty")
+            echo "Уровень сложности влияет на урон и поведение мобов:\n• Мирный: нет враждебных мобов, нет голода\n• Легкий: мобы наносят меньше урона\n• Обычный: стандартная сложность\n• Сложный: максимальный урон, голод снижает здоровье до 0.5"
+            ;;
+        "level-seed")
+            echo "Управляет алгоритмом, который создает ваш мир.\nОдинаковый сид создаст одинаковый мир.\nОставьте пустым для случайного мира."
+            ;;
+        "level-type")
+            echo "Плоский мир.\nКопайте или стройте в удовольствие.\n• Обычный: стандартная генерация с биомами\n• Плоский: плоский мир для строительства\n• Классический: старая генерация"
+            ;;
+        "simulation-distance")
+            echo "Дистанция моделирования.\nИгра загружается и применяет изменения на максимальном расстоянии от игрока (в блоках):\n• 4 фрагмента: 64x64 блоков\n• 6 фрагментов: 96x96 блоков\n• 8 фрагментов: 128x128 блоков\nВлияет на производительность сервера."
+            ;;
+        "spawn-radius")
+            echo "Возрождение в пределах указанного радиуса в блоках, если не установлена точка появления.\nМаксимальное значение: 128"
+            ;;
+        "default-player-permission-level")
+            echo "Права игроков по умолчанию:\n• Посетитель: только просмотр, нельзя взаимодействовать\n• Участник: может строить, добывать, атаковать\n• Оператор: все права участника + команды"
+            ;;
+        "max-players")
+            echo "Максимальное количество игроков, которые могут одновременно находиться на сервере"
+            ;;
+        "view-distance")
+            echo "Дистанция прорисовки (в блоках).\nОпределяет, как далеко игроки видят мир.\nБольше значение = лучше видимость, но выше нагрузка."
+            ;;
+        "online-mode")
+            echo "Проверка лицензий Minecraft.\nВКЛ: только игроки с лицензией могут подключиться\nВЫКЛ: любой может подключиться (пиратские копии)"
+            ;;
+        "white-list")
+            echo "Белый список игроков.\nВКЛ: только игроки из whitelist.json могут подключиться\nВЫКЛ: любой может подключиться (если online-mode выключен)"
+            ;;
+        "pvp")
+            echo "Огонь по своим.\nВКЛ: игроки могут наносить урон друг другу\nВЫКЛ: игроки не могут атаковать друг друга"
+            ;;
+        "allow-cheats")
+            echo "Разрешить использование читов и команд в игре.\nВКЛ: игроки могут использовать команды (если есть права)\nВЫКЛ: команды недоступны"
+            ;;
+        "enable-command-blocks")
+            echo "Используйте команды для программирования этих блоков.\nВКЛ: командные блоки работают\nВЫКЛ: командные блоки не работают"
+            ;;
+        "showcoordinates")
+            echo "Отображение вашего текущего положения в мире.\nПоказывает координаты X, Y, Z"
+            ;;
+        "dofiretick")
+            echo "Распространение огня.\nВКЛ: огонь может переходить с одной сущности на другую\nВЫКЛ: огонь не распространяется"
+            ;;
+        "tntexplodes")
+            echo "Детонация динамита.\nВКЛ: TNT взрывается при активации\nВЫКЛ: TNT не взрывается"
+            ;;
+        "player-access")
+            echo "Доступ игрока.\nКто может подключаться к вашему миру:\n• Приглашенные\n• Друзья\n• Друзья друзей"
+            ;;
+        "visible-lan")
+            echo "Видят игроки в локальной сети.\nИгроки в вашей локальной сети могут присоединиться к вашему миру."
+            ;;
+        "locator-panel")
+            echo "Панель локатора.\nПоказывает направление ближайших игроков в мире."
+            ;;
+        "multiplayer")
+            echo "Многопользовательская игра.\nДругие игроки могут присоединиться к вашему миру."
+            ;;
+        "doimmediaterespawn")
+            echo "Мгновенное возрождение.\nВКЛ: пропустить меню «Ты умер!» и сразу возродиться\nВЫКЛ: показывать экран смерти"
+            ;;
+        "showdayspassed")
+            echo "Показать количество прошедших дней.\nОтобразить количество прошедших игровых дней."
+            ;;
+        "naturalregeneration")
+            echo "Естественная регенерация.\nВКЛ: увеличение или потеря здоровья из-за голода\nВЫКЛ: здоровье не восстанавливается автоматически"
+            ;;
+        "keepinventory")
+            echo "Сохранение инвентаря при смерти.\nВКЛ: все предметы остаются в инвентаре после смерти\nВЫКЛ: предметы выпадают при смерти"
+            ;;
+        "dodaylightcycle")
+            echo "Смена дня и ночи.\nВКЛ: время в игре идет нормально, день и ночь сменяются\nВЫКЛ: время застывает"
+            ;;
+        "doweathercycle")
+            echo "Смена погоды.\nВКЛ: возможность дождя, снега и грозы\nВЫКЛ: погода не меняется"
+            ;;
+        "domobspawning")
+            echo "Создание мобов.\nВКЛ: мобы создаются естественным образом\nВЫКЛ: мобы не спавнятся"
+            ;;
+        "mobgriefing")
+            echo "Вредительство мобов.\nВКЛ: мобы могут перемещать и уничтожать блоки в мире\nВЫКЛ: мобы не могут изменять блоки"
+            ;;
+        "doentitydrops")
+            echo "Выпадение добычи из сущностей.\nВКЛ: из объектов, не являющихся мобами (например, из картин), выпадают предметы\nВЫКЛ: предметы не выпадают"
+            ;;
+        "dotiledrops")
+            echo "Выпадение предметов из блоков.\nВКЛ: при разрушении блоков выпадают предметы\nВЫКЛ: предметы не выпадают"
+            ;;
+        "commandblockoutput")
+            echo "Вывод командных блоков.\nВКЛ: команды из командных блоков выводятся в чат\nВЫКЛ: команды скрыты"
+            ;;
+        "randomtickspeed")
+            echo "Случайная скорость такта.\nВлияет на поведение определенных блоков, например, на скорость роста и гниения растительности.\n0 = отключено, 1 = нормально (макс. 4096)"
+            ;;
+        "playerssleepingpercentage")
+            echo "Процент спящих игроков.\nСколько игроков должно быть в кровати, чтобы пропустить ночь?\n0-100% (100% = все игроки)"
+            ;;
+        "recipesunlock")
+            echo "Разблокировка рецептов.\nВКЛ: собирайте материалы, чтобы открыть новые рецепты в книге рецептов\nВЫКЛ: все рецепты доступны сразу"
+            ;;
+        "respawnblocksexplode")
+            echo "Возрождающиеся блоки взрываются.\nВКЛ: якоря возрождения и кровати могут взрываться\nВЫКЛ: блоки не взрываются"
+            ;;
+        "hardcore")
+            echo "Хардкор режим.\nВы не сможете возродиться, если умрете. Удачи! Она вам понадобится."
+            ;;
+        "start-with-map")
+            echo "Начальная карта.\nВКЛ: появиться на пустой карте, чтобы исследовать мир\nВЫКЛ: без карты"
+            ;;
+        "bonus-chest")
+            echo "Бонусный сундук.\nВКЛ: появление рядом с сундуком с предметами в начале игры\nВЫКЛ: без бонусного сундука"
+            ;;
+        *)
+            echo "Настройка параметра сервера"
+            ;;
+    esac
 }
 
 # Helper to toggle boolean property
@@ -1321,36 +1976,133 @@ toggle_prop() {
     local key="$1"; local file="$2"
     local current=$(get_property "$key" "$file" "false")
     local new_val="true"
-    if [[ "$current" == "true" ]]; then new_val="false"; fi
-    set_property "$key" "$new_val" "$file"
+    local current_display=$(fmt_bool "$current")
+    local desc=$(get_setting_description "$key")
+    
+    if [[ "${current,,}" == "true" ]]; then 
+        new_val="false"
+    fi
+    
+    local new_display=$(fmt_bool "$new_val")
+    
+    # Показываем описание и подтверждение
+    local title=""
+    case "$key" in
+        "online-mode") title="Online Mode (Лицензия)" ;;
+        "white-list") title="Белый список" ;;
+        "pvp") title="PvP (Огонь по своим)" ;;
+        "allow-cheats") title="Разрешить читы" ;;
+        "enable-command-blocks") title="Командные блоки" ;;
+        *) title="$key" ;;
+    esac
+    
+    if whiptail --yesno "$title\n\n$desc\n\nТекущее значение: $current_display\nНовое значение: $new_display" 15 70 --yes-button "Изменить" --no-button "Отмена"; then
+        if ! set_property "$key" "$new_val" "$file"; then
+            whiptail --msgbox "❌ Ошибка при изменении настройки!" 8 50
+        fi
+    fi
 }
 
 # Helper for Input Box
 input_prop() {
     local key="$1"; local file="$2"; local title="$3"
+    local min_val="${4:-}"  # Минимальное значение (опционально)
+    local max_val="${5:-}"  # Максимальное значение (опционально)
     local current=$(get_property "$key" "$file" "")
-    local new_val=$(whiptail --title "$title" --inputbox "Введите значение для $key:" 10 60 "$current" 3>&1 1>&2 2>&3)
-    if [ $? -eq 0 ] && [ -n "$new_val" ]; then
-        set_property "$key" "$new_val" "$file"
+    local desc=$(get_setting_description "$key")
+    
+    # Показываем описание сначала
+    whiptail --msgbox "$title\n\n$desc\n\nТекущее значение: ${current:-не задано}" 15 70
+    
+    local prompt="Введите новое значение:"
+    
+    # Добавляем информацию о диапазоне, если указан
+    if [ -n "$min_val" ] && [ -n "$max_val" ]; then
+        prompt="$prompt\n(Диапазон: $min_val - $max_val)"
     fi
+    
+    while true; do
+        local new_val=$(whiptail --title "$title" --inputbox "$prompt" 12 60 "$current" 3>&1 1>&2 2>&3)
+        local exit_code=$?
+        
+        if [ $exit_code -ne 0 ]; then
+            return  # Пользователь отменил
+        fi
+        
+        # Для некоторых полей пустое значение допустимо (например, level-seed)
+        if [ -z "$new_val" ] && [[ "$key" != "level-seed" && "$key" != "server-name" ]]; then
+            whiptail --msgbox "❌ Значение не может быть пустым!" 8 50
+            continue
+        fi
+        
+        # Валидация числовых значений, если указан диапазон
+        if [ -n "$min_val" ] && [ -n "$max_val" ] && [ -n "$new_val" ]; then
+            if ! validate_number "$new_val" "$min_val" "$max_val"; then
+                whiptail --msgbox "❌ Неверное значение!\n\nДолжно быть числом от $min_val до $max_val" 10 50
+                continue
+            fi
+        fi
+        
+        # Сохраняем значение
+        if set_property "$key" "$new_val" "$file"; then
+            return 0
+        else
+            whiptail --msgbox "❌ Ошибка при сохранении настройки!" 8 50
+            return 1
+        fi
+    done
 }
 
 # Helper for Radio List (Select)
 select_prop() {
     local key="$1"; local file="$2"; local title="$3"; shift 3; local options=("$@")
     local current=$(get_property "$key" "$file" "")
+    local desc=$(get_setting_description "$key")
     
-    # Construct radiolist args
+    # Маппинг английских названий на русские
+    declare -A translations=(
+        ["survival"]="Выживание"
+        ["creative"]="Творческий"
+        ["adventure"]="Приключение"
+        ["peaceful"]="Мирный"
+        ["easy"]="Легкий"
+        ["normal"]="Обычный"
+        ["hard"]="Сложный"
+        ["DEFAULT"]="Обычный"
+        ["FLAT"]="Плоский"
+        ["LEGACY"]="Классический"
+        ["visitor"]="Посетитель"
+        ["member"]="Участник"
+        ["operator"]="Оператор"
+    )
+    
+    # Создаем массив для radiolist (только русские названия в интерфейсе)
     local args=()
     for opt in "${options[@]}"; do
         local status="OFF"
+        local ru_name="${translations[$opt]:-$opt}" # отображаемое значение
+        
         if [[ "$opt" == "$current" ]]; then status="ON"; fi
-        args+=("$opt" "" "$status")
+        # В качестве тега используем русское имя, чтобы не выводить английский столбец
+        args+=("$ru_name" "" "$status")
     done
     
-    local new_val=$(whiptail --title "$title" --radiolist "Выберите значение:" 15 60 6 "${args[@]}" 3>&1 1>&2 2>&3)
-    if [ $? -eq 0 ] && [ -n "$new_val" ]; then
-        set_property "$key" "$new_val" "$file"
+    # Показываем описание прямо в radiolist (размер 20x80)
+    local selected_ru=$(whiptail --title "$title" --radiolist "$desc\n\nВыберите значение:" 20 80 6 "${args[@]}" 3>&1 1>&2 2>&3)
+    if [ $? -eq 0 ] && [ -n "$selected_ru" ]; then
+        # Конвертируем выбранное русское значение обратно в исходный ключ
+        local new_val="$current"
+        for opt in "${options[@]}"; do
+            local ru_name="${translations[$opt]:-$opt}"
+            if [[ "$ru_name" == "$selected_ru" ]]; then
+                new_val="$opt"
+                break
+            fi
+        done
+
+        if ! set_property "$key" "$new_val" "$file"; then
+            whiptail --msgbox "❌ Ошибка при сохранении настройки!" 8 50
+        fi
     fi
 }
 
@@ -1358,17 +2110,24 @@ select_prop() {
 menu_gamerule() {
     local rule="$1"; local title="$2"
     if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-        whiptail --msgbox "Сервер не запущен. Нельзя изменить правило '$rule'." 10 60
+        whiptail --msgbox "⚠️ Сервер не запущен.\n\nПравило '$rule' можно изменить только когда сервер работает." 10 60
         return
     fi
     
     local screen_name=${SERVICE_NAME%.service}
-    local choice=$(whiptail --title "$title" --menu "Выберите состояние правила $rule:" 12 60 2 \
-        "true" "Включить" \
-        "false" "Выключить" 3>&1 1>&2 2>&3)
+    local desc=$(get_setting_description "$rule")
+    
+    # Показываем описание правила
+    whiptail --msgbox "$title\n\n$desc" 12 70
+    
+    local choice=$(whiptail --title "$title" --menu "Выберите состояние правила '$rule':" 12 60 2 \
+        "true" "Включить ✓" \
+        "false" "Выключить ✗" 3>&1 1>&2 2>&3)
         
     if [ $? -eq 0 ]; then
-        sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $choice^M"
+        if ! sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $choice^M" 2>/dev/null; then
+            whiptail --msgbox "❌ Ошибка при отправке команды серверу!" 8 50
+        fi
     fi
 }
 
