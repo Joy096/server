@@ -55,9 +55,11 @@ create_renew_hook() {
     local domain=$1
     LOGI "Создаем/Обновляем универсальный hook-скрипт: ${HOOK_SCRIPT_PATH}"
     
-    cat << 'EOF' > "${HOOK_SCRIPT_PATH}"
-#!/bin/bash
-DOMAIN="$1"
+    # "Впекаем" домен прямо в скрипт, чтобы он не зависел от аргументов при автообновлении
+    echo "#!/bin/bash" > "${HOOK_SCRIPT_PATH}"
+    echo "DOMAIN=\"${domain}\"" >> "${HOOK_SCRIPT_PATH}"
+    
+    cat << 'EOF' >> "${HOOK_SCRIPT_PATH}"
 LOG_FILE="/root/acme_renew.log"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"; }
 
@@ -123,7 +125,7 @@ ssl_cert_issue_and_deploy() {
 
     LOGI "Запрашиваем сертификат для ${CF_Domain} и регистрируем hook..."
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-    ~/.acme.sh/acme.sh --issue --dns dns_cf -d "${CF_Domain}" -d "*.${CF_Domain}" --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    ~/.acme.sh/acme.sh --issue --dns dns_cf -d "${CF_Domain}" -d "*.${CF_Domain}" --ecc --renew-hook "${HOOK_SCRIPT_PATH}" --log
     if [[ $? -ne 0 ]]; then LOGE "Ошибка выпуска сертификата"; exit 1; fi
     
     ~/.acme.sh/acme.sh --upgrade --auto-upgrade
