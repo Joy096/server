@@ -2669,7 +2669,7 @@ setup_auto_update() {
     # URL скрипта на GitHub (всегда актуальная версия)
     local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
     local cron_marker="minecraft_autoupdate_${ACTIVE_SERVER_ID}"
-    local cron_cmd="bash <(curl -Ls $script_url) --auto-update $ACTIVE_SERVER_ID >> /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log 2>&1 # $cron_marker"
+    local cron_cmd="curl -Ls $script_url | bash -s -- --auto-update $ACTIVE_SERVER_ID >> /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log 2>&1 # $cron_marker"
     
     # Проверяем, есть ли уже задача (ищем по маркеру)
     if sudo crontab -l 2>/dev/null | grep -Fq "$cron_marker"; then
@@ -3985,7 +3985,7 @@ setup_auto_backup() {
     if [ -z "$cron_schedule" ]; then error "Пустое расписание."; return 1; fi
 
     # Формируем новую задачу с использованием curl
-    local new_job="$cron_schedule bash <(curl -Ls $script_url) --auto-backup >> /var/log/minecraft_backup.log 2>&1 # $cron_marker"
+    local new_job="$cron_schedule curl -Ls $script_url | bash -s -- --auto-backup >> /var/log/minecraft_backup.log 2>&1 # $cron_marker"
 
     # Удаляем старую задачу (если была) и добавляем новую
     local temp_cron=$(mktemp)
