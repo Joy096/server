@@ -60,6 +60,218 @@ check_root() {
     fi
 }
 
+# --- Функции автообновления ---
+
+get_latest_bedrock_version_info() {
+    local download_api_url="https://net-secondary.web.minecraft-services.net/api/v1.0/download/links"
+    local user_agent="Mozilla/5.0 (X11; CrOS x86_64 12871.102.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36"
+    local backup_url="https://raw.githubusercontent.com/ghwns9652/Minecraft-Bedrock-Server-Updater/main/backup_download_link.txt"
+    
+    # Пытаемся получить JSON с официального API
+    local json_response
+    json_response=$(curl -s -H "User-Agent: $user_agent" --max-time 10 "$download_api_url")
+    
+    local download_link=""
+    
+    if [ -n "$json_response" ]; then
+        # Парсим JSON с помощью jq
+        download_link=$(echo "$json_response" | jq -r '.result.links[] | select(.downloadType == "serverBedrockLinux") | .downloadUrl')
+    fi
+    
+    # Если ссылка не найдена или ошибка сети, пробуем бэкап URL (как в python скрипте)
+    if [ -z "$download_link" ] || [ "$download_link" == "null" ]; then
+        warning "Не удалось получить ссылку с официального API. Пробуем резервный источник..."
+        download_link=$(curl -s -H "User-Agent: $user_agent" --max-time 10 "$backup_url")
+    fi
+    
+    if [ -z "$download_link" ] || [[ "$download_link" != http* ]]; then
+        return 1 # Ошибка получения ссылки
+    fi
+    
+    echo "$download_link"
+    return 0
+}
+
+# Ядро обновления (общая логика для ручного и авто)
+# Аргументы: $1 - путь к zip файлу, $2 - версия (опционально)
+perform_update_core() {
+    local zip_file_path="$1"
+    local version_label="$2"
+    
+    if [ -z "$zip_file_path" ] || [ ! -f "$zip_file_path" ]; then
+        error "Файл обновления не найден: $zip_file_path"
+        return 1
+    fi
+
+    local update_backup_dir="$DEFAULT_INSTALL_DIR/update_data_backup_$(date +%s)"
+
+    msg "--- Начало обновления сервера '$ACTIVE_SERVER_ID' ---"
+    msg "Используемый файл: $zip_file_path"
+    
+    msg "Создание полной резервной копии перед обновлением..."
+    local old_backup_setting=$BACKUP_WORLDS_ONLY
+    BACKUP_WORLDS_ONLY=false
+    
+    # Автоматически останавливаем сервер перед бэкапом, если он запущен
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        msg "Сервер запущен. Остановка для создания корректного бэкапа..."
+        stop_server
+        sleep 2
+    fi
+    
+    if ! create_backup; then
+        read -p "Не удалось создать резервную копию! Продолжить БЕЗ основной копии? (yes/no): " BACKUP_FAIL_CONFIRM
+        if [[ "$BACKUP_FAIL_CONFIRM" != "yes" ]]; then 
+            BACKUP_WORLDS_ONLY=$old_backup_setting
+            error "Обновление отменено пользователем."
+            return 1
+        fi
+    fi
+    BACKUP_WORLDS_ONLY=$old_backup_setting
+
+    msg "Остановка сервера '$SERVICE_NAME'..."
+    if ! stop_server; then warning "Не удалось остановить сервер, но продолжим обновление..."; fi
+    sleep 3
+
+    msg "Создание директории для сохранения текущих данных: $update_backup_dir"
+    sudo rm -rf "$update_backup_dir"; sudo mkdir -p "$update_backup_dir"
+    sudo chown "$SERVER_USER":"$SERVER_USER" "$update_backup_dir"
+    
+    msg "Перемещение пользовательских данных во временную директорию..."
+    local moved_something=0
+    local files_to_keep=("worlds" "server.properties" "permissions.json" "whitelist.json" "behavior_packs" "resource_packs" "valid_known_packs.json" "config" "allowlist.json")
+    
+    for item in "${files_to_keep[@]}"; do
+      if [ -e "$DEFAULT_INSTALL_DIR/$item" ]; then
+         if sudo -u "$SERVER_USER" mv "$DEFAULT_INSTALL_DIR/$item" "$update_backup_dir/"; then
+             msg "  - '$item' сохранено."
+             moved_something=1
+         else
+             warning "  - Не удалось переместить '$item'. Попытка через sudo..."
+             if sudo mv "$DEFAULT_INSTALL_DIR/$item" "$update_backup_dir/"; then msg "  - '$item' перемещено через sudo."; moved_something=1; else warning "  - Ошибка перемещения '$item' даже через sudo."; fi
+         fi
+      fi
+    done
+    if [ "$moved_something" -eq 0 ]; then warning "Не удалось сохранить пользовательские данные. Возможно, это была первая установка?"; fi
+
+    msg "Очистка директории сервера '$DEFAULT_INSTALL_DIR' от старых файлов..."
+    sudo find "$DEFAULT_INSTALL_DIR" -maxdepth 1 -mindepth 1 ! -name "$(basename "$update_backup_dir")" -exec rm -rf {} \;
+
+    msg "Распаковка архива '$zip_file_path'..."
+    if ! sudo unzip -oq "$zip_file_path" -d "$DEFAULT_INSTALL_DIR"; then
+        warning "Ошибка распаковки архива! Попытка восстановить данные..."
+        if [ -d "$update_backup_dir" ]; then sudo mv "$update_backup_dir"/* "$DEFAULT_INSTALL_DIR/" 2>/dev/null; fi
+        sudo rm -rf "$update_backup_dir"
+        error "Не удалось распаковать архив. Убедитесь, что это корректный zip-файл."
+        return 1
+    fi
+
+    msg "Возвращение пользовательских данных..."
+    if [ -d "$update_backup_dir" ]; then
+        sudo rsync -a --remove-source-files "$update_backup_dir/" "$DEFAULT_INSTALL_DIR/"
+        sudo rm -rf "$update_backup_dir"
+    fi
+
+    msg "Установка прав доступа..."
+    if ! sudo chown -R "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR"; then warning "Не удалось изменить владельца."; fi
+    if [ -f "$DEFAULT_INSTALL_DIR/bedrock_server" ]; then 
+        if ! sudo chmod +x "$DEFAULT_INSTALL_DIR/bedrock_server"; then warning "Не удалось установить +x."; fi
+    else 
+        warning "bedrock_server не найден после распаковки!"
+    fi
+
+    # Обновляем файл версии
+    if [ -n "$version_label" ]; then
+        msg "Запись версии '$version_label' в файл..."
+        echo "$version_label" | sudo tee "$DEFAULT_INSTALL_DIR/version" > /dev/null
+        sudo chown "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR/version"
+    else
+        warning "Версия не передана, файл 'version' не обновлен."
+    fi
+
+    msg "Запуск обновленного сервера '$SERVICE_NAME'..."
+    if ! start_server; then error "Сервер обновлен, но не запустился. Проверьте логи."; return 1; fi
+
+    msg "✅ Обновление сервера успешно завершено!"
+    return 0
+}
+
+# Автоматическое обновление
+auto_update_server() {
+    local mode="$1" # "interactive" (по умолчанию) или "silent"
+
+    if [ -z "$ACTIVE_SERVER_ID" ]; then
+        if [ "$mode" != "silent" ]; then error "Активный сервер не выбран."; fi
+        return 1
+    fi
+    
+    if [ "$mode" != "silent" ]; then msg "🔎 Проверка обновлений для сервера '$ACTIVE_SERVER_ID'..."; fi
+
+    local current_version="unknown"
+    if [ -f "$DEFAULT_INSTALL_DIR/version" ]; then
+        current_version=$(cat "$DEFAULT_INSTALL_DIR/version")
+    fi
+    if [ "$mode" != "silent" ]; then msg "Текущая версия: $current_version"; fi
+
+    local latest_url
+    latest_url=$(get_latest_bedrock_version_info)
+    
+    if [ $? -ne 0 ] || [ -z "$latest_url" ]; then
+        if [ "$mode" != "silent" ]; then error "Не удалось получить информацию о последней версии."; fi
+        return 1
+    fi
+
+    # Извлекаем версию из URL
+    local latest_version
+    local filename=$(basename "$latest_url")
+    latest_version=$(echo "$filename" | sed -E 's/bedrock-server-(.*)\.zip/\1/')
+
+    if [ "$mode" != "silent" ]; then msg "Последняя доступная версия: $latest_version"; fi
+
+    if [ "$current_version" == "$latest_version" ]; then
+        if [ "$mode" != "silent" ]; then msg "✅ У вас уже установлена последняя версия."; fi
+        return 0
+    fi
+
+    if [ "$mode" != "silent" ]; then
+        msg "🚀 Доступна новая версия! ($current_version -> $latest_version)"
+        read -p "Хотите обновить сервер сейчас? (yes/no): " UPDATE_NOW
+        if [[ "$UPDATE_NOW" != "yes" ]]; then
+            msg "Обновление отложено."
+            return 0
+        fi
+    else
+        echo "Auto-update: New version found ($current_version -> $latest_version). Updating..."
+    fi
+
+    local download_dir="/tmp/minecraft_update"
+    mkdir -p "$download_dir"
+    local zip_file="$download_dir/$filename"
+
+    if [ "$mode" != "silent" ]; then msg "Скачивание обновления..."; fi
+    
+    # Используем wget (-q для silent режима если нужно, но пока оставим вывод в лог)
+    local wget_opts="-U \"Mozilla/5.0 ...\"" 
+    if [ "$mode" == "silent" ]; then 
+        if ! wget -q -U "Mozilla/5.0 (X11; CrOS x86_64 12871.102.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36" -O "$zip_file" "$latest_url"; then
+             echo "Error downloading update." >&2; return 1
+        fi
+    else
+        if ! wget -U "Mozilla/5.0 (X11; CrOS x86_64 12871.102.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.141 Safari/537.36" -O "$zip_file" "$latest_url"; then
+            error "Ошибка скачивания обновления."
+            return 1
+        fi
+    fi
+
+    perform_update_core "$zip_file" "$latest_version"
+    local update_result=$?
+    
+    # Очистка
+    rm -rf "$download_dir"
+    
+    return $update_result
+}
+
 # Проверка наличия установленного АКТИВНОГО сервера
 is_server_installed() {
     # Проверяем, что директория активного сервера задана и существует
@@ -76,7 +288,15 @@ is_server_installed() {
 
 # Установка необходимых зависимостей
 install_dependencies() {
-    local marker_file="/etc/minecraft_servers/.dependencies_installed"
+    # Проверяем наличие curl и jq (для автообновления)
+    if ! command -v curl &> /dev/null || ! command -v jq &> /dev/null; then
+        warning "Не найдены 'curl' или 'jq'. Попытка установить..."
+        if sudo apt-get update -y > /dev/null 2>&1 && sudo apt-get install -y curl jq > /dev/null 2>&1; then
+            msg "✅ curl и jq успешно установлены."
+        else
+            error "Не удалось установить curl/jq. Автообновление может не работать."
+        fi
+    fi
 
     # --- ARM Check (Always run this check on ARM) ---
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
@@ -113,7 +333,9 @@ install_dependencies() {
     if command -v unzip >/dev/null && command -v wget >/dev/null && command -v curl >/dev/null && command -v screen >/dev/null && command -v jq >/dev/null && command -v zip >/dev/null; then
          # Создаем маркер
          sudo mkdir -p "$(dirname "$marker_file")"
-         sudo touch "$marker_file"
+         if [ -n "$marker_file" ]; then
+            sudo touch "$marker_file"
+         fi
          return 0
     fi
 
@@ -142,13 +364,16 @@ install_dependencies() {
     
     # Создаем маркер успешной установки
     sudo mkdir -p "$(dirname "$marker_file")"
-    sudo touch "$marker_file"
+    if [ -n "$marker_file" ]; then
+        sudo touch "$marker_file"
+    fi
 }
 
 # Создание пользователя для запуска сервера (если еще не создан)
 create_server_user() {
     if id "$SERVER_USER" &>/dev/null; then
-        msg "Пользователь '$SERVER_USER' уже существует."
+        # Пользователь уже существует - молчим
+        :
     else
         msg "Создание системного пользователя '$SERVER_USER' без домашней директории..."
         # Создаем системного пользователя (-r) без создания домашней директории (-M)
@@ -1573,13 +1798,16 @@ configure_cheats_settings() {
         local allow_cheats_val=$(get_property "allow-cheats" "$f" "false")
         local allow_cheats=$(fmt_bool "$allow_cheats_val")
         local cmd_blocks=$(fmt_bool "$(get_property "enable-command-blocks" "$f" "false")")
-        local day_night=$(fmt_bool "$(get_property "dodaylightcycle" "$f" "true")")
-        local keep_inv=$(fmt_bool "$(get_property "keepinventory" "$f" "false")")
-        local mob_spawn=$(fmt_bool "$(get_property "domobspawning" "$f" "true")")
-        local mob_grief=$(fmt_bool "$(get_property "mobgriefing" "$f" "true")")
-        local weather=$(fmt_bool "$(get_property "doweathercycle" "$f" "true")")
-        local entity_drops=$(fmt_bool "$(get_property "doentitydrops" "$f" "true")")
-        local cmd_output=$(fmt_bool "$(get_property "commandblockoutput" "$f" "true")")
+        
+        local day_night=$(get_gamerule_value "dodaylightcycle")
+        local keep_inv=$(get_gamerule_value "keepinventory")
+        local mob_spawn=$(get_gamerule_value "domobspawning")
+        local mob_grief=$(get_gamerule_value "mobgriefing")
+        local weather=$(get_gamerule_value "doweathercycle")
+        local entity_drops=$(get_gamerule_value "doentitydrops")
+        local cmd_output=$(get_gamerule_value "commandblockoutput")
+        
+        # Gamerules хранятся в мире, а не в server.properties. Отображаем значок "⚡" чтобы показать что это команда.
         
         # Меню строим динамически: если читы выключены, скрываем остальные пункты
         local menu_items=(
@@ -1588,18 +1816,18 @@ configure_cheats_settings() {
         if [[ "${allow_cheats_val,,}" == "true" ]]; then
             menu_items+=(
                 "enable-command-blocks" "Командные блоки: $cmd_blocks"
-                "dodaylightcycle" "Смена дня и ночи: $day_night"
-                "keepinventory" "Сохранять инвентарь: $keep_inv"
-                "domobspawning" "Создание мобов: $mob_spawn"
-                "mobgriefing" "Вредительство мобов: $mob_grief"
-                "doweathercycle" "Смена погоды: $weather"
-                "doentitydrops" "Выпадение добычи из сущностей: $entity_drops"
-                "commandblockoutput" "Вывод командных блоков: $cmd_output"
+                "dodaylightcycle" "⚡ Смена дня и ночи ($day_night)"
+                "keepinventory" "⚡ Сохранять инвентарь ($keep_inv)"
+                "domobspawning" "⚡ Создание мобов ($mob_spawn)"
+                "mobgriefing" "⚡ Вредительство мобов ($mob_grief)"
+                "doweathercycle" "⚡ Смена погоды ($weather)"
+                "doentitydrops" "⚡ Выпадение добычи из сущностей ($entity_drops)"
+                "commandblockoutput" "⚡ Вывод командных блоков ($cmd_output)"
             )
         fi
         menu_items+=("0" "← Назад")
 
-        local choice=$(whiptail --title "🛠️ Читы и Команды" --menu "Выберите параметр:" 24 80 14 "${menu_items[@]}" 3>&1 1>&2 2>&3)
+        local choice=$(whiptail --title "🛠️ Читы и Команды" --menu "⚡ = Gamerule (применяется к запущенному серверу)\n(...) = Последнее установленное значение через этот скрипт\n\nВыберите параметр:" 24 80 14 "${menu_items[@]}" 3>&1 1>&2 2>&3)
 
         if [ $? -ne 0 ]; then return; fi
 
@@ -1639,7 +1867,7 @@ configure_cheats_settings() {
                 ;;
             keepinventory)
                 local desc=$(get_setting_description "keepinventory")
-                local on="OFF"; local off="ON"
+                local on="ON"; local off="OFF"
                 local choice_ki=$(whiptail --title "Сохранять инвентарь" --radiolist "$desc\n\nВыберите состояние:" 20 80 2 \
                     "true" "Включить" "$on" \
                     "false" "Выключить" "$off" 3>&1 1>&2 2>&3)
@@ -1730,11 +1958,23 @@ menu_gamerule_cmd() {
     local screen_name=${SERVICE_NAME%.service}
     
     if ! sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-        whiptail --msgbox "⚠️ Сервер не запущен.\n\nПравило '$rule' можно изменить только когда сервер работает." 10 60
+        whiptail --msgbox "⚠️ Сервер не запущен.\n\nПравило '$rule' можно изменить только когда сервер работает.\n\nЗапустите сервер и попробуйте снова." 12 60
         return 1
     fi
     
     if sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "gamerule $rule $val^M" 2>/dev/null; then
+        # Сохраняем успешное изменение в кэш
+        local cache_file="$DEFAULT_INSTALL_DIR/.gamerules_cache"
+        # Удаляем старую запись если есть
+        if [ -f "$cache_file" ]; then
+            grep -v "^${rule}=" "$cache_file" > "${cache_file}.tmp" && mv "${cache_file}.tmp" "$cache_file"
+        fi
+        echo "${rule}=${val}" >> "$cache_file"
+        
+        # Сообщение убрано по просьбе пользователя
+        # local display_val="ВЫКЛ"
+        # if [[ "$val" == "true" ]]; then display_val="ВКЛ"; fi
+        # whiptail --msgbox "✅ Правило '$rule' установлено: $display_val\n\nИзменения применены немедленно." 10 50
         return 0
     else
         whiptail --msgbox "❌ Ошибка при отправке команды серверу!" 8 50
@@ -1819,6 +2059,22 @@ display_ru() {
             ;;
         *) echo "$val" ;;
     esac
+}
+
+# Helper to get cached gamerule value
+get_gamerule_value() {
+    local rule="$1"
+    local cache_file="$DEFAULT_INSTALL_DIR/.gamerules_cache"
+    local default="Неизв."
+    
+    if [ -f "$cache_file" ]; then
+        local val=$(grep "^${rule}=" "$cache_file" | cut -d'=' -f2)
+        if [ -n "$val" ]; then
+            if [[ "$val" == "true" ]]; then echo "ВКЛ"; else echo "ВЫКЛ"; fi
+            return
+        fi
+    fi
+    echo "$default"
 }
 
 
@@ -2343,6 +2599,59 @@ players_menu() {
     done
 }
 
+# Настройка автообновления через cron
+setup_auto_update() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+    msg "--- Настройка автоматического обновления (Cron) для '$ACTIVE_SERVER_ID' ---"
+    
+    # Проверка cron
+    if ! command -v crontab &> /dev/null; then
+        error "Утилита 'crontab' не найдена. Установите cron."
+        return 1
+    fi
+
+    local script_path=$(readlink -f "$0")
+    local cron_cmd="$script_path --auto-update $ACTIVE_SERVER_ID >> /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log 2>&1"
+    
+    # Проверяем, есть ли уже задача
+    if sudo crontab -l 2>/dev/null | grep -Fq "$script_path --auto-update $ACTIVE_SERVER_ID"; then
+        msg "⚠️ Автообновление для этого сервера уже настроено."
+        read -p "Хотите удалить существующее расписание? (yes/no): " DEL_CRON
+        if [[ "$DEL_CRON" == "yes" ]]; then
+            # Удаляем строку из crontab
+            sudo crontab -l 2>/dev/null | grep -Fv "$script_path --auto-update $ACTIVE_SERVER_ID" | sudo crontab -
+            msg "✅ Автообновление отключено."
+        fi
+        return 0
+    fi
+
+    echo "Выберите частоту проверки обновлений:"
+    echo "1. Каждый час"
+    echo "2. Каждый день (в 4:00 утра)"
+    echo "3. Каждую неделю (Воскресенье в 4:00 утра)"
+    echo "0. Отмена"
+    
+    local freq_choice
+    read -p "Ваш выбор: " freq_choice
+    
+    local cron_schedule=""
+    case $freq_choice in
+        1) cron_schedule="0 * * * *" ;;
+        2) cron_schedule="0 4 * * *" ;;
+        3) cron_schedule="0 4 * * 0" ;;
+        0) return 0 ;;
+        *) error "Неверный выбор."; return 1 ;;
+    esac
+
+    msg "Добавление задачи в crontab root..."
+    # Добавляем новую задачу, сохраняя старые
+    (sudo crontab -l 2>/dev/null; echo "$cron_schedule $cron_cmd") | sudo crontab -
+    
+    msg "✅ Автообновление успешно настроено!"
+    msg "Логи будут писаться в: /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log"
+    read -p "Нажмите Enter для продолжения..." DUMMY_VAR
+}
+
 # Функция для ручного обновления сервера (пользователь предоставляет архив)
 manual_update_server() {
     if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран для обновления."; return 1; fi
@@ -2358,6 +2667,7 @@ manual_update_server() {
 
     local new_version_manual
     read -p "Введите номер новой версии, которую вы устанавливаете (например, 1.21.80.01): " new_version_manual
+
     if [ -z "$new_version_manual" ]; then
         warning "Номер версии не указан. Файл 'version' не будет обновлен."
     fi
@@ -2370,76 +2680,7 @@ manual_update_server() {
         return 1
     fi
 
-    local update_backup_dir="$DEFAULT_INSTALL_DIR/manual_update_data_backup_$(date +%s)"
-
-    msg "Создание полной резервной копии перед обновлением..."
-    local old_backup_setting=$BACKUP_WORLDS_ONLY
-    BACKUP_WORLDS_ONLY=false
-    if ! create_backup; then
-        read -p "Не удалось создать резервную копию! Продолжить БЕЗ основной копии? (yes/no): " BACKUP_FAIL_CONFIRM
-        if [[ "$BACKUP_FAIL_CONFIRM" != "yes" ]]; then BACKUP_WORLDS_ONLY=$old_backup_setting; error "Обновление отменено."; return 1; fi
-    fi
-    BACKUP_WORLDS_ONLY=$old_backup_setting
-
-    msg "Остановка сервера '$SERVICE_NAME'..."
-    if ! stop_server; then warning "Не удалось остановить сервер, но продолжим обновление..."; fi
-    sleep 3
-
-    msg "Создание директории для сохранения текущих данных: $update_backup_dir"
-    sudo rm -rf "$update_backup_dir"; sudo mkdir -p "$update_backup_dir"
-    sudo chown "$SERVER_USER":"$SERVER_USER" "$update_backup_dir"
-    msg "Перемещение пользовательских данных во временную директорию..."
-    local moved_something=0
-    local files_to_keep=("worlds" "server.properties" "permissions.json" "whitelist.json" "behavior_packs" "resource_packs" "valid_known_packs.json" "config")
-    for item in "${files_to_keep[@]}"; do
-      if [ -e "$DEFAULT_INSTALL_DIR/$item" ]; then
-         if sudo -u "$SERVER_USER" mv "$DEFAULT_INSTALL_DIR/$item" "$update_backup_dir/"; then
-             msg "  - '$item' сохранено."
-             moved_something=1
-         else
-             warning "  - Не удалось переместить '$item'. Попытка через sudo..."
-             if sudo mv "$DEFAULT_INSTALL_DIR/$item" "$update_backup_dir/"; then msg "  - '$item' перемещено через sudo."; moved_something=1; else warning "  - Ошибка перемещения '$item' даже через sudo."; fi
-         fi
-      fi
-    done
-    if [ "$moved_something" -eq 0 ]; then warning "Не удалось сохранить пользовательские данные. Возможно, это была первая установка?"; fi
-
-    msg "Очистка директории сервера '$DEFAULT_INSTALL_DIR' от старых файлов..."
-    sudo find "$DEFAULT_INSTALL_DIR" -maxdepth 1 -mindepth 1 ! -name "$(basename "$update_backup_dir")" -exec rm -rf {} \;
-
-    msg "Распаковка вашего архива '$user_downloaded_zip'..."
-    if ! sudo unzip -oq "$user_downloaded_zip" -d "$DEFAULT_INSTALL_DIR"; then
-        warning "Ошибка распаковки вашего архива! Попытка восстановить данные..."
-        if [ -d "$update_backup_dir" ]; then sudo mv "$update_backup_dir"/* "$DEFAULT_INSTALL_DIR/" 2>/dev/null; fi
-        sudo rm -rf "$update_backup_dir"
-        error "Не удалось распаковать ваш архив. Убедитесь, что это корректный zip-файл сервера Bedrock."
-        return 1
-    fi
-
-    msg "Возвращение пользовательских данных..."
-    if [ -d "$update_backup_dir" ]; then
-        sudo rsync -a --remove-source-files "$update_backup_dir/" "$DEFAULT_INSTALL_DIR/"
-        sudo rm -rf "$update_backup_dir"
-    fi
-
-    msg "Установка прав доступа..."
-    if ! sudo chown -R "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR"; then warning "Не удалось изменить владельца."; fi
-    if [ -f "$DEFAULT_INSTALL_DIR/bedrock_server" ]; then if ! sudo chmod +x "$DEFAULT_INSTALL_DIR/bedrock_server"; then warning "Не удалось установить +x."; fi; else warning "bedrock_server не найден после распаковки!"; fi
-
-    if [ -n "$new_version_manual" ]; then
-        msg "Запись версии '$new_version_manual'..."
-        if echo "$new_version_manual" | sudo tee "$DEFAULT_INSTALL_DIR/version" > /dev/null; then
-            sudo chown "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR/version"
-        else
-            warning "Не удалось записать файл версии."
-        fi
-    fi
-
-    msg "Запуск обновленного сервера '$SERVICE_NAME'..."
-    if ! start_server; then error "Сервер обновлен, но не запустился. Проверьте логи."; return 1; fi
-
-    msg "--- Ручная установка обновления сервера (ID: $ACTIVE_SERVER_ID) завершена! ---"
-    return 0
+    perform_update_core "$user_downloaded_zip" "$new_version_manual"
 }
 
 # --- Функции Мультисерверного режима ---
@@ -2479,7 +2720,7 @@ load_server_config() {
     SERVER_PORT="$port"
     ACTIVE_SERVER_ID="$id"
 
-    msg ">>> Активный сервер: $name (ID: $id, Порт: $port, Путь: $dir, Сервис: $service) <<<"
+    msg ">>> Активный сервер: $id (Порт: $port, Путь: $dir, Сервис: $service) <<<"
     return 0
 }
 
@@ -2629,19 +2870,32 @@ create_new_server() {
     msg "--- Создание нового сервера Minecraft Bedrock ---"
     # Мультисерверный режим теперь всегда активен, проверка MULTISERVER_ENABLED не нужна
 
-    local server_name server_id server_port new_dir new_service input_id
-    # Запрос имени
-    read -p "Введите название нового сервера: " server_name
-    if [ -z "$server_name" ]; then error "Название сервера не может быть пустым."; return 1; fi
-
-    # Генерация и запрос ID
-    server_id=$(echo "$server_name" | tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]_-'); server_id=${server_id:-"server$(date +%s)"}
-    read -p "Введите ID сервера (только буквы, цифры, _-) [$server_id]: " input_id
-    if [ -n "$input_id" ]; then server_id="$input_id"; fi
-    # Простая валидация ID
-    if ! [[ "$server_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then error "ID содержит недопустимые символы."; return 1; fi
-    # Проверка уникальности ID
-    if grep -q "^${server_id}:" "$SERVERS_CONFIG_FILE"; then error "Сервер с ID '$server_id' уже существует."; return 1; fi
+    local server_name server_id server_port new_dir new_service
+    
+    # 1. Запрос Имени (используем как ID)
+    while [ -z "$server_name" ]; do
+        read -p "Введите уникальное имя для нового сервера (латиница, цифры, _, -): " server_name
+        # Очистка имени для использования в качестве ID (удаляем все кроме букв, цифр, _ и -)
+        local safe_id=$(echo "$server_name" | tr -cd '[:alnum:]_-')
+        
+        if [ -z "$server_name" ]; then
+             warning "Имя не может быть пустым."
+        elif [ -z "$safe_id" ]; then
+             warning "Имя должно содержать хотя бы одну букву или цифру."
+             server_name=""
+        elif grep -q "^${safe_id}:" "$SERVERS_CONFIG_FILE" 2>/dev/null; then
+             warning "Сервер с ID '$safe_id' уже существует! Выберите другое имя."
+             server_name=""
+        else
+             # Если все ок, фиксируем ID и имя
+             server_id="$safe_id"
+             # server_name оставляем как ввел пользователь, но фактически для конфига используем server_id
+             # но в вашем запросе вы просили "имя как ID", так что сделаем их идентичными для простоты
+             server_name="$server_id"
+        fi
+    done
+    
+    msg "Создается сервер с ID: $server_id"
 
     # Запрос порта
     read -p "Введите порт для сервера (например, 19132): " server_port
@@ -2725,10 +2979,10 @@ delete_server() {
     local dir=$DEFAULT_INSTALL_DIR
     local service=$SERVICE_NAME
 
-    warning "ВНИМАНИЕ! Удаление сервера '$name' (ID: $id) приведет к потере всех данных из '$dir'!"
+    warning "ВНИМАНИЕ! Удаление сервера (ID: $id) приведет к потере всех данных из '$dir'!"
     read -p "Создать резервную копию ПЕРЕД удалением? (yes/no): " BACKUP_CONFIRM
     if [[ "$BACKUP_CONFIRM" == "yes" ]]; then
-        msg "Создание резервной копии для сервера '$name'..."
+        msg "Создание резервной копии для сервера '$id'..."
         if create_backup; then
             msg "Резервная копия создана."
         else
@@ -2738,7 +2992,7 @@ delete_server() {
         fi
     fi
 
-    read -p "Вы ТОЧНО уверены, что хотите удалить сервер '$name' (ID: $id)? (yes/no): " CONFIRM
+    read -p "Вы ТОЧНО уверены, что хотите удалить сервер (ID: $id)? (yes/no): " CONFIRM
     if [[ "$CONFIRM" != "yes" ]]; then msg "Удаление отменено."; return 1; fi
 
     # Используем uninstall_bds для основной работы (остановка, удаление сервиса, папки, порт)
@@ -2775,8 +3029,134 @@ delete_server() {
         warning "В конфигурации не осталось серверов."
     fi
 
-    msg "Сервер '$name' (ID: $id) удален."
+    msg "Сервер (ID: $id) удален."
     return 0
+}
+
+# Изменение ID сервера (переименование)
+rename_server_id() {
+    msg "--- Изменение ID (имени) сервера ---"
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+
+    local current_id="$ACTIVE_SERVER_ID"
+    local current_dir="$DEFAULT_INSTALL_DIR"
+    local current_service="$SERVICE_NAME"
+    local current_port="$SERVER_PORT"
+    local current_name_conf=$(grep "^${current_id}:" "$SERVERS_CONFIG_FILE" | cut -d':' -f2) # Для сохранения имени, если оно отличается (в нашей текущей логике name=id)
+
+    msg "Текущий ID: $current_id"
+    local new_id
+    while [ -z "$new_id" ]; do
+        read -p "Введите НОВЫЙ уникальный ID (латиница, цифры, _, -): " new_id
+        local safe_id=$(echo "$new_id" | tr -cd '[:alnum:]_-')
+        
+        if [ -z "$new_id" ]; then
+             warning "ID не может быть пустым."
+        elif [ "$new_id" != "$safe_id" ]; then
+             warning "ID содержит недопустимые символы. Используйте только буквы, цифры, _ и -."
+             new_id=""
+        elif grep -q "^${safe_id}:" "$SERVERS_CONFIG_FILE" 2>/dev/null; then
+             warning "Сервер с ID '$safe_id' уже существует!"
+             new_id=""
+        fi
+    done
+
+    msg "ВНИМАНИЕ: Процесс переименования остановит сервер, переместит файлы и пересоздаст сервис."
+    read -p "Вы уверены, что хотите переименовать '$current_id' в '$new_id'? (yes/no): " CONFIRM
+    if [[ "$CONFIRM" != "yes" ]]; then msg "Переименование отменено."; return 1; fi
+
+    # 1. Остановка сервера
+    if sudo systemctl is-active --quiet "$current_service"; then
+        msg "Остановка сервера '$current_id'..."
+        stop_server
+    fi
+
+    # 2. Переименование директории
+    local new_dir="$SERVERS_BASE_DIR/$new_id"
+    if [ -d "$new_dir" ]; then error "Директория '$new_dir' уже существует (конфликт)."; return 1; fi
+
+    msg "Перемещение файлов из '$current_dir' в '$new_dir'..."
+    if ! sudo mv "$current_dir" "$new_dir"; then
+        error "Не удалось переименовать директорию. Отмена."
+        return 1
+    fi
+
+    # 3. Обновление сервиса systemd
+    # Удаляем старый сервис
+    msg "Удаление старого сервиса '$current_service'..."
+    if sudo systemctl is-enabled --quiet "$current_service"; then
+        sudo systemctl disable "$current_service"
+    fi
+    local old_service_file="/etc/systemd/system/$current_service"
+    if [ -f "$old_service_file" ]; then
+        sudo rm "$old_service_file"
+    fi
+    
+    # Создаем новый сервис
+    local new_service="bds_${new_id}.service"
+    msg "Создание нового сервиса '$new_service'..."
+    # Временно подменяем глобальные переменные для create_systemd_service (хотя она принимает аргументы, но использует SERVER_USER)
+    if ! create_systemd_service "$new_dir" "$new_service"; then
+        error "Не удалось создать новый сервис! Файлы находятся в '$new_dir'."
+        # Пытаемся откатить? Сложно. Оставим файлы в новом месте, но без конфига скрипта это проблема.
+        # Лучше просто вернуть ошибку.
+        return 1
+    fi
+
+    # 4. Обновление конфигурации скрипта (servers.conf)
+    msg "Обновление конфигурации серверов..."
+    local temp_conf=$(mktemp)
+    # Удаляем старую запись
+    grep -v "^${current_id}:" "$SERVERS_CONFIG_FILE" > "$temp_conf"
+    # Добавляем новую. Имя (name) меняем на новый ID, так как мы договорились id=name
+    echo "${new_id}:${new_id}:${current_port}:${new_dir}:${new_service}" >> "$temp_conf"
+    
+    if sudo mv "$temp_conf" "$SERVERS_CONFIG_FILE"; then
+         msg "Конфигурация обновлена."
+    else
+         error "Не удалось обновить '$SERVERS_CONFIG_FILE'. Проверьте вручную."
+    fi
+
+    # 5. Обновление Cron задач (автообновление и бэкапы)
+    msg "Обновление задач планировщика (Cron)..."
+    local cron_temp=$(mktemp)
+    sudo crontab -l 2>/dev/null > "$cron_temp"
+    
+    # Заменяем старый ID на новый в аргументах скрипта
+    # Ищем строки содержащие "--auto-update $current_id" или "--auto-backup $current_id"
+    if grep -q "$current_id" "$cron_temp"; then
+        # Используем sed для замены только целых слов ID, чтобы не задеть подстроки (хотя ID уникальны, лучше с пробелами)
+        # Формат в кроне: ... --auto-update OLD_ID ...
+        sed -i "s/--auto-update $current_id /--auto-update $new_id /g" "$cron_temp"
+        sed -i "s/--auto-update $current_id$/--auto-update $new_id/g" "$cron_temp" # Если в конце строки
+        
+        # Лог файлы в кроне тоже могут содержать ID
+        sed -i "s/minecraft_update_${current_id}.log/minecraft_update_${new_id}.log/g" "$cron_temp"
+        
+        # То же для бэкапов, если они есть
+        # (в текущей реализации setup_auto_backup не реализован полностью в деталях в этом чате, но предположим)
+        # Если есть другие задачи, завязанные на ID
+        
+        sudo crontab "$cron_temp"
+        msg "Cron обновлен."
+    else
+        msg "Задач Cron для этого сервера не найдено."
+    fi
+    rm "$cron_temp"
+
+    # 6. Обновление текущего состояния
+    msg "Переключение активного сервера на новый ID..."
+    if load_server_config "$new_id"; then
+        msg "✅ Успешно переименовано: $current_id -> $new_id"
+        msg "Автоматический запуск сервера..."
+        if start_server; then
+            msg "Сервер успешно запущен!"
+        else
+            warning "Не удалось автоматически запустить сервер. Запустите его вручную."
+        fi
+    else
+        error "Переименование завершено, но не удалось загрузить новый конфиг."
+    fi
 }
 
 # Выбор активного сервера
@@ -2796,7 +3176,7 @@ select_active_server() {
         servers+=("$id"); server_names+=("$name")
         local status="остановлен"; if sudo systemctl is-active --quiet "$service"; then status="АКТИВЕН ✅"; fi
         local active_mark=" "; if [ "$id" == "$ACTIVE_SERVER_ID" ]; then active_mark="*"; fi
-        printf "%1s %2d. %-25s (ID: %-10s Порт: %-5s Статус: %s)\n" "$active_mark" $i "$name" "$id" "$port" "$status"
+        printf "%1s %2d. %-25s (Порт: %-5s Статус: %s)\n" "$active_mark" $i "$id" "$port" "$status"
         ((i++))
     done < "$SERVERS_CONFIG_FILE"
 
@@ -2809,7 +3189,7 @@ select_active_server() {
     if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt ${#servers[@]} ]; then error "Некорректный выбор."; return 1; fi
 
     local selected_id="${servers[$choice-1]}"
-    if [ "$selected_id" == "$ACTIVE_SERVER_ID" ]; then msg "Сервер '${server_names[$choice-1]}' уже является активным."; return 0; fi
+    if [ "$selected_id" == "$ACTIVE_SERVER_ID" ]; then msg "Сервер '$selected_id' уже является активным."; return 0; fi
 
     # Загружаем конфигурацию выбранного сервера
     if ! load_server_config "$selected_id"; then
@@ -2902,7 +3282,122 @@ manage_all_servers() {
     return 0
 }
 
+# Подменю управления активным сервером
+active_server_menu() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+    while true; do
+        echo ""; echo "--- Управление Активным Сервером (ID: $ACTIVE_SERVER_ID) ---"
+        echo "1. Состояние / Запуск / Остановка"
+        echo "2. Настройки сервера (server.properties)"
+        echo "3. Управление игроками (Whitelist/OP)"
+        echo "4. Резервные копии"
+        echo "5. Обновление сервера"
+        echo "6. Изменить ID сервера (Переименовать)"
+        echo "0. Назад"
+        
+        local choice; read -p "Опция: " choice
+        case $choice in
+            1) 
+                 # Подменю статуса/запуска (бывшее 4)
+                 while true; do
+                     local current_status="остановлен"
+                     if sudo systemctl is-active --quiet "$SERVICE_NAME"; then current_status="АКТИВЕН ✅"; fi
+                     echo ""; echo "--- Состояние Сервера ($current_status) ---"
+                     echo "1. Запустить"; echo "2. Остановить"; echo "3. Перезапустить"; echo "4. Логи"; echo "0. Назад"
+                     local mgmt_choice; read -p "Опция: " mgmt_choice
+                 case $mgmt_choice in
+                     1) start_server ;; 2) stop_server ;; 3) restart_server ;; 4) check_status ;; 0) break ;; *) msg "Неверно.";;
+                 esac
+                 if [[ "$mgmt_choice" != "0" ]]; then read -p "Нажмите Enter для продолжения..." DUMMY; fi
+                 done
+                 ;;
+            2) configure_menu ;;
+            3) players_menu ;;
+            4) full_backup_menu ;;
+            5) 
+                while true; do
+                     echo ""; echo "--- Обновление Сервера ---"
+                     echo "1. Автоматическое обновление (Онлайн)"
+                     echo "2. Настроить автообновление по расписанию"
+                     echo "3. Ручное обновление (.zip)"
+                     echo "0. Назад"
+                     local u_choice; read -p "Опция: " u_choice
+                     case $u_choice in
+                         1) auto_update_server; read -p "Нажмите Enter..." DUMMY ;;
+                         2) setup_auto_update ;; 
+                         3) manual_update_server; read -p "Нажмите Enter..." DUMMY ;; 
+                         0) break ;; 
+                         *) msg "Неверно."; read -p "Нажмите Enter..." DUMMY ;;
+                     esac
+                     # Пауза теперь внутри case для нужных опций
+                     # if [[ "$u_choice" != "0" ]]; then read -p "Нажмите Enter..." DUMMY; fi
+                done
+                ;;
+            6) rename_server_id ;;
+            0) return 0 ;;
+            *) msg "Неверно." ;;
+        esac
+    done
+}
+
+# Подменю системных инструментов
+system_tools_menu() {
+    while true; do
+        echo ""; echo "--- Системные Инструменты ---"
+        echo "1. Миграция: Создать архив всех серверов"
+        echo "2. Миграция: Восстановить из архива"
+        echo "3. Диагностика сети"
+        echo "4. ОПАСНАЯ ЗОНА: Удалить ВСЕ серверы"
+        echo "0. Назад"
+        
+        local choice; read -p "Опция: " choice
+        case $choice in
+            1) create_migration_archive ;;
+            2) restore_from_migration_archive ;;
+            3) troubleshoot_server ;;
+            4) wipe_all_servers ;;
+            0) return 0 ;;
+            *) msg "Неверно." ;;
+        esac
+        # Убираем паузу для пункта 0
+        if [[ "$choice" != "0" ]]; then read -p "Нажмите Enter..." DUMMY; fi
+    done
+}
+
+# Подменю выбора сервера (Главный пункт 1)
+server_selection_menu() {
+    while true; do
+        echo ""; echo "--- Управление Списком Серверов ---"
+        echo "1. Создать НОВЫЙ сервер"
+        echo "2. Выбрать активный сервер (из списка)"
+        echo "3. Удалить сервер"
+        echo "0. Назад"
+        
+        local choice; read -p "Опция: " choice
+        case $choice in
+            1) create_new_server ;;
+            2) select_active_server ;;
+            3) 
+                if [ -z "$ACTIVE_SERVER_ID" ]; then
+                    warning "Сначала выберите сервер (пункт 2), который хотите удалить."
+                else
+                    delete_server
+                fi
+                ;;
+            0) return 0 ;;
+            *) msg "Неверно." ;;
+        esac
+        # Убираем паузу для пункта 0
+        if [[ "$choice" != "0" ]]; then read -p "Нажмите Enter..." DUMMY; fi
+    done
+}
+
 # Подменю мультисерверного режима (точка входа)
+multiserver_menu() {
+    _multiserver_menu_impl # Вызываем реализацию
+}
+
+# Реализация меню мультисерверного режима
 multiserver_menu() {
     _multiserver_menu_impl # Вызываем реализацию
 }
@@ -3613,6 +4108,7 @@ troubleshoot_server() {
 # --- Обработка аргументов командной строки (для автобэкапа) ---
 handle_command_args() {
     if [ "$1" == "--auto-backup" ]; then
+        # ... (существующий код --auto-backup) ...
         # Используем echo для вывода в лог cron
         echo "--- Запуск автоматического резервного копирования $(date) ---"
         # Автобэкап должен запускаться от root, поэтому check_root не нужен здесь,
@@ -3670,10 +4166,71 @@ handle_command_args() {
             fi
         fi
         exit $fail_count # Выход с кодом ошибки = кол-во неудачных бэкапов
+    elif [ "$1" == "--auto-update" ]; then
+        local target_server_id="$2"
+        echo "--- Запуск автоматического обновления $(date) ---"
+        
+        # Загружаем настройки
+        if ! source "$(readlink -f "$0")"; then
+             echo "Ошибка: Не удалось загрузить переменные из скрипта." >&2; exit 1
+        fi
+
+        if [ -z "$target_server_id" ]; then
+            echo "Ошибка: Не указан ID сервера для обновления." >&2; exit 1
+        fi
+
+        # Загружаем конфиг сервера
+        if load_server_config "$target_server_id"; then
+            echo "Проверка обновлений для сервера $target_server_id..."
+            auto_update_server "silent"
+        else
+            echo "Ошибка: Не удалось загрузить конфигурацию сервера $target_server_id." >&2; exit 1
+        fi
+        exit 0
     fi
     # Здесь можно добавить обработку других аргументов в будущем
     # Если аргумент не распознан, просто возвращаемся
     return 0
+}
+
+# Объединенное меню резервного копирования
+full_backup_menu() {
+    while true; do
+        echo ""; echo "--- Управление Резервными Копиями ---"
+        echo "1. Создать копию активного сервера (ID: ${ACTIVE_SERVER_ID:-не выбран})"
+        echo "2. Восстановить активный сервер из копии"
+        echo "3. Удалить резервную копию"
+        echo "4. Список ВСЕХ резервных копий"
+        echo "5. Настроить авто-бэкап (для всех серверов)"
+        echo "0. Назад в главное меню"
+        echo "-----------------------------------"
+        
+        local backup_choice; read -p "Выберите опцию: " backup_choice
+        case $backup_choice in
+            1) 
+                if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; else create_backup; fi 
+                ;;
+            2) 
+                if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; else restore_backup; fi 
+                ;;
+            3) 
+                # delete_backup требует активного сервера для контекста или можно доработать, но пока оставим проверку
+                # В текущей реализации delete_backup спрашивает какую копию удалить из списка, 
+                # но список часто фильтруется. В функции delete_backup есть проверка на active server id?
+                # Посмотрим... функция delete_backup требует ACTIVE_SERVER_ID.
+                if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; else delete_backup; fi
+                ;;
+            4) list_backups ;;
+            5) setup_auto_backup ;;
+            0) return 0 ;;
+            *) msg "Неверно.";;
+        esac
+        
+        # Пауза перед возвратом в меню бэкапов (кроме выхода)
+        if [[ "$backup_choice" != "0" ]]; then
+             read -p "Нажмите Enter для продолжения..." DUMMY_VAR
+        fi
+    done
 }
 
 # --- Инициализация и Главный Цикл ---
@@ -3694,58 +4251,43 @@ init_multiserver || exit 1 # Выходим, если инициализация
 
 # Главный цикл меню
 while true; do
-    SERVER_STATUS="Мультисервер"
-    SERVER_INFO_LINE="Выберите сервер или операцию"
-    active_server_name_display="не выбран"
+    SERVER_STATUS_LINE="Статус: Мультисервер (активный не выбран)"
+    SERVER_ADDRESS_LINE=""
 
-    # Получаем имя активного сервера, если он выбран
+    # Получаем данные активного сервера, если он выбран
     if [ -n "$ACTIVE_SERVER_ID" ]; then
-         # Используем get_property для чтения имени из файла server.properties активного сервера
-         # Это дает более актуальное имя, чем в servers.conf
-         active_server_name_display=$(get_property "server-name" "$DEFAULT_INSTALL_DIR/server.properties" "$ACTIVE_SERVER_ID")
-         # Если имя пустое в properties, используем ID
-         if [ -z "$active_server_name_display" ]; then active_server_name_display=$ACTIVE_SERVER_ID; fi
-
-         SERVER_STATUS="Активен: $active_server_name_display (ID: $ACTIVE_SERVER_ID)"
-         # Проверяем статус сервиса
-         if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
-             SERVER_INFO_LINE="Сервис: $SERVICE_NAME (АКТИВЕН ✅)"
-         else
-             # Дополнительно проверяем, включен ли сервис
-             if sudo systemctl is-enabled --quiet "$SERVICE_NAME"; then
-                 SERVER_INFO_LINE="Сервис: $SERVICE_NAME (остановлен, автозапуск ВКЛ)"
-             else
-                  SERVER_INFO_LINE="Сервис: $SERVICE_NAME (остановлен, автозапуск ВЫКЛ)"
-             fi
+         current_v="Unknown"
+         if [ -f "$DEFAULT_INSTALL_DIR/version" ]; then
+             current_v=$(cat "$DEFAULT_INSTALL_DIR/version")
          fi
-    else
-         SERVER_STATUS="Мультисервер (активный не выбран)"
-         SERVER_INFO_LINE="Выберите сервер (опция 8 -> 2) или создайте новый (опция 1)"
+
+         status_icon="ОСТАНОВЛЕН 🔴"
+         if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+             status_icon="АКТИВЕН ✅"
+         fi
+         
+         SERVER_STATUS_LINE="Статус: ID: $ACTIVE_SERVER_ID | Версия: $current_v | $status_icon"
+         
+         # Попытка определить внешний IP
+         # Используем внешний сервис для определения публичного IP, с таймаутом
+         server_ip=$(curl -s --max-time 2 https://api.ipify.org || hostname -I | cut -d' ' -f1)
+         
+         if [ -z "$server_ip" ]; then server_ip="127.0.0.1"; fi
+         
+         SERVER_ADDRESS_LINE="Адрес: $server_ip:$SERVER_PORT"
     fi
 
     # Отображаем главное меню
     echo ""
     echo "=========== Minecraft Bedrock Server Manager (Мультисервер) ==========="
-    echo "   Статус: $SERVER_STATUS"
-    echo "   $SERVER_INFO_LINE"
+    echo "   $SERVER_STATUS_LINE"
+    if [ -n "$SERVER_ADDRESS_LINE" ]; then
+        echo "   $SERVER_ADDRESS_LINE"
+    fi
     echo "======================================================================"
-    echo " --- Операции с Серверами ---"
-    echo " 1. Создать НОВЫЙ сервер"
-    echo " 2. Удалить активный сервер"
-    echo " 3. Настроить активный сервер (Подменю)"
-    echo " 4. Управление активным сервером (Запуск/Стоп/Статус)"
-    echo " 5. Управление игроками активного сервера (Whitelist/OP)"
-    echo " 6. Резервные копии активного сервера (Подменю)"
-    echo " 7. Установить обновление активного сервера (ВРУЧНУЮ)"
-    echo " 8. Меню Мультисервера (Выбор/Управление всеми)"
-    echo " --- Дополнительно ---"
-    echo " 9. Показать адрес активного сервера для подключения"
-    echo "10. Настроить Авто-Бэкап (для всех серверов)"
-    echo "11. Посмотреть все резервные копии"
-    echo "12. Создать Архив Миграции (все серверы)"
-    echo "13. Восстановить из Архива Миграции"
-    echo "14. УДАЛИТЬ ВСЕ СЕРВЕРЫ И ДАННЫЕ"
-    echo "15. Диагностика проблем с подключением"
+    echo " 1. Управление серверами (Создание / Удаление / Выбор)"
+    echo " 2. Управление активным сервером (Старт, Настройки, Бэкап, Обновление)"
+    echo " 3. Системные инструменты (Миграция, Диагностика, Сброс)"
     echo " 0. Выход"
     echo "======================================================================"
 
@@ -3753,68 +4295,21 @@ while true; do
     choice=""
     read -p "Выберите опцию: " choice
 
-    # Блокируем опции, требующие активного сервера
-    if [ -z "$ACTIVE_SERVER_ID" ] && [[ "$choice" =~ ^[2-7]$|^9$|^15$ ]]; then
-        warning "Сначала выберите активный сервер (опция 8 -> 2)."
-        read -p "Нажмите Enter для продолжения..." DUMMY_VAR
-        continue # Возвращаемся к началу цикла while
-    fi
-
     # Обработка выбора
     case $choice in
-        1) create_new_server ;;
-        2) delete_server ;; # Удаляет активный, требует выбора
-        3) configure_menu ;; # Требует выбора активного
-        4) # Подменю управления активным сервером
-             while true; do
-                 current_status="остановлен"
-                 if sudo systemctl is-active --quiet "$SERVICE_NAME"; then current_status="АКТИВЕН ✅"; fi
-                 echo ""; echo "--- Управление Сервером (ID: $ACTIVE_SERVER_ID | Статус: $current_status) ---"
-                 echo "1. Запустить"; echo "2. Остановить"; echo "3. Перезапустить"; echo "4. Статус/Логи"; echo "0. Назад"
-                 mgmt_choice=""; read -p "Опция: " mgmt_choice
-                 case $mgmt_choice in
-                     1) start_server ;; 2) stop_server ;; 3) restart_server ;; 4) check_status ;; 0) break ;; *) msg "Неверно.";;
-                 esac
-             done ;;
-        5) players_menu ;; # Требует выбора активного
-        6) # Подменю бэкапов активного сервера
-            while true; do
-                 echo ""; echo "--- Резервные Копии (Сервер ID: $ACTIVE_SERVER_ID) ---"
-                 echo "1. Создать копию активного сервера"
-                 echo "2. Восстановить активный сервер из копии"
-                 echo "3. Список ВСЕХ резервных копий"
-                 echo "4. Удалить резервную копию"
-                 echo "0. Назад"
-                 local backup_choice; read -p "Опция: " backup_choice
-                 case $backup_choice in
-                     1) create_backup ;; 2) restore_backup ;; 3) list_backups ;; 4) delete_backup ;; 0) break ;; *) msg "Неверно.";;
-                 esac
-                  # Пауза перед повторным показом меню подраздела, если не вышли
-                 if [[ "$backup_choice" != "0" ]]; then
-                     read -p "Нажмите Enter для возврата в меню бэкапов..." DUMMY_VAR
-                 fi
-            done ;;
-        7) manual_update_server ;; # Требует выбора активного
-        8) multiserver_menu ;;
-        9) show_server_address ;; # Требует выбора активного
-        10) setup_auto_backup ;;
-        11) list_backups ;; # Показывает все бэкапы
-        12) create_migration_archive ;; # Не требует активного
-        13) restore_from_migration_archive ;; # Не требует активного
-        14) wipe_all_servers ;;
-        15) troubleshoot_server ;;
+        1) server_selection_menu ;;
+        2) active_server_menu ;;
+        3) system_tools_menu ;;
         0) msg "Выход."; exit 0 ;;
         *) msg "Неверная опция. Попробуйте снова." ;;
     esac
 
-    # Добавляем паузу перед повторным отображением главного меню, если не выходим
-     if [[ "$choice" != "0" ]]; then
-         # Пропускаем паузу после выхода из подменю, где уже могла быть своя пауза
-         # (Подменю 4, 5, 6, 8 имеют свои циклы и/или паузы)
-         if ! [[ "$choice" =~ ^[4-6]$|^8$ ]]; then
-             read -p "Нажмите Enter для возврата в главное меню..." DUMMY_VAR
-         fi
-     fi
+    # Пауза только для неверных вариантов (не 1, 2, 3, 0)
+    if [[ "$choice" != "0" ]]; then
+        if ! [[ "$choice" =~ ^[1-3]$ ]]; then
+            read -p "Нажмите Enter для продолжения..." DUMMY_VAR
+        fi
+    fi
 
 done
 
