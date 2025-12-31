@@ -196,13 +196,69 @@ perform_update_core() {
     return 0
 }
 
+# Ротация лог-файла (если больше 1MB — оставить последние 1000 строк)
+rotate_log_if_needed() {
+    local log_file="$1"
+    local max_size=1048576  # 1MB в байтах
+    local keep_lines=1000
+    
+    if [ -z "$log_file" ] || [ ! -f "$log_file" ]; then
+        return 0
+    fi
+    
+    local file_size=$(stat -c%s "$log_file" 2>/dev/null || echo 0)
+    if [ "$file_size" -gt "$max_size" ]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log rotation: file size ${file_size} bytes > ${max_size}, keeping last ${keep_lines} lines"
+        tail -n "$keep_lines" "$log_file" > "${log_file}.tmp" && mv "${log_file}.tmp" "$log_file"
+    fi
+}
+
 # Автоматическое обновление
+# Проверка наличия онлайн игроков (по сетевым подключениям)
+are_players_online() {
+    local port="$SERVER_PORT"
+    if [ -z "$port" ]; then return 1; fi
+
+    # Метод 1: ss (iproute2) - предпочтительно
+    if command -v ss >/dev/null; then
+        # -u: udp, -n: numeric, state established
+        # sport = :$port
+        if ss -u -n -H state established sport = :$port | grep -q "."; then
+            return 0 # Есть подключения
+        fi
+        return 1
+    fi
+
+    # Метод 2: netstat (net-tools)
+    if command -v netstat >/dev/null; then
+        # Ищем ESTABLISHED соединения на порту
+        if netstat -uan | grep ":$port " | grep -q "ESTABLISHED"; then
+             return 0
+        fi
+        return 1
+    fi
+    
+    return 1 # Если нечем проверить, считаем, что никого нет
+}
+
 auto_update_server() {
     local mode="$1" # "interactive" (по умолчанию) или "silent"
 
     if [ -z "$ACTIVE_SERVER_ID" ]; then
         if [ "$mode" != "silent" ]; then error "Активный сервер не выбран."; fi
         return 1
+    fi
+    
+    # В тихом режиме (cron) ротируем лог и проверяем игроков
+    if [ "$mode" == "silent" ]; then
+        # Ротация лога если нужно
+        rotate_log_if_needed "/var/log/minecraft_update_${ACTIVE_SERVER_ID}.log"
+        
+        # Проверяем игроков перед началом любых действий
+        if are_players_online; then
+            echo "Auto-update deferred: Players are online on port $SERVER_PORT."
+            return 0
+        fi
     fi
     
     if [ "$mode" != "silent" ]; then msg "🔎 Проверка обновлений для сервера '$ACTIVE_SERVER_ID'..."; fi
@@ -330,11 +386,11 @@ install_dependencies() {
     fi
 
     # 2. Если маркера нет, но команды ЕСТЬ - создаем маркер и выходим
-    if command -v unzip >/dev/null && command -v wget >/dev/null && command -v curl >/dev/null && command -v screen >/dev/null && command -v jq >/dev/null && command -v zip >/dev/null; then
+    if command -v unzip >/dev/null && command -v wget >/dev/null && command -v curl >/dev/null && command -v screen >/dev/null && command -v jq >/dev/null && command -v zip >/dev/null && (command -v ss >/dev/null || command -v netstat >/dev/null); then
          # Создаем маркер
          sudo mkdir -p "$(dirname "$marker_file")"
          if [ -n "$marker_file" ]; then
-            sudo touch "$marker_file"
+         sudo touch "$marker_file"
          fi
          return 0
     fi
@@ -345,11 +401,11 @@ install_dependencies() {
         warning "Не удалось обновить список пакетов. Проверьте интернет-соединение."
     fi
 
-    msg "Установка необходимых пакетов (unzip, wget, curl, libssl-dev, screen, nano, ufw, jq, zip, gpg)..."
-    # Добавили zip для архива миграции и gpg для box64
-    if ! sudo apt-get install -y unzip wget curl libssl-dev screen nano ufw jq zip gpg > /dev/null; then
+    msg "Установка необходимых пакетов (unzip, wget, curl, libssl-dev, screen, nano, ufw, jq, zip, gpg, net-tools)..."
+    # Добавили zip для архива миграции и gpg для box64, net-tools для проверки подключений
+    if ! sudo apt-get install -y unzip wget curl libssl-dev screen nano ufw jq zip gpg net-tools > /dev/null; then
         # Используем error и exit, так как без зависимостей скрипт бесполезен
-        error "Не удалось установить зависимости. Установите вручную: sudo apt install unzip wget curl libssl-dev screen nano ufw jq zip gpg"
+        error "Не удалось установить зависимости. Установите вручную: sudo apt install unzip wget curl libssl-dev screen nano ufw jq zip gpg net-tools"
         exit 1
     fi
 
@@ -365,7 +421,7 @@ install_dependencies() {
     # Создаем маркер успешной установки
     sudo mkdir -p "$(dirname "$marker_file")"
     if [ -n "$marker_file" ]; then
-        sudo touch "$marker_file"
+    sudo touch "$marker_file"
     fi
 }
 
@@ -2610,16 +2666,18 @@ setup_auto_update() {
         return 1
     fi
 
-    local script_path=$(readlink -f "$0")
-    local cron_cmd="$script_path --auto-update $ACTIVE_SERVER_ID >> /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log 2>&1"
+    # URL скрипта на GitHub (всегда актуальная версия)
+    local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
+    local cron_marker="minecraft_autoupdate_${ACTIVE_SERVER_ID}"
+    local cron_cmd="bash <(curl -Ls $script_url) --auto-update $ACTIVE_SERVER_ID >> /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log 2>&1 # $cron_marker"
     
-    # Проверяем, есть ли уже задача
-    if sudo crontab -l 2>/dev/null | grep -Fq "$script_path --auto-update $ACTIVE_SERVER_ID"; then
+    # Проверяем, есть ли уже задача (ищем по маркеру)
+    if sudo crontab -l 2>/dev/null | grep -Fq "$cron_marker"; then
         msg "⚠️ Автообновление для этого сервера уже настроено."
         read -p "Хотите удалить существующее расписание? (yes/no): " DEL_CRON
         if [[ "$DEL_CRON" == "yes" ]]; then
-            # Удаляем строку из crontab
-            sudo crontab -l 2>/dev/null | grep -Fv "$script_path --auto-update $ACTIVE_SERVER_ID" | sudo crontab -
+            # Удаляем строку из crontab по маркеру
+            sudo crontab -l 2>/dev/null | grep -Fv "$cron_marker" | sudo crontab -
             msg "✅ Автообновление отключено."
         fi
         return 0
@@ -2648,6 +2706,7 @@ setup_auto_update() {
     (sudo crontab -l 2>/dev/null; echo "$cron_schedule $cron_cmd") | sudo crontab -
     
     msg "✅ Автообновление успешно настроено!"
+    msg "Скрипт будет скачиваться с GitHub при каждой проверке (всегда актуальная версия)."
     msg "Логи будут писаться в: /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log"
     read -p "Нажмите Enter для продолжения..." DUMMY_VAR
 }
@@ -3122,20 +3181,23 @@ rename_server_id() {
     local cron_temp=$(mktemp)
     sudo crontab -l 2>/dev/null > "$cron_temp"
     
-    # Заменяем старый ID на новый в аргументах скрипта
-    # Ищем строки содержащие "--auto-update $current_id" или "--auto-backup $current_id"
+    # Заменяем старый ID на новый в маркерах и командах
+    # Новый формат использует маркеры: minecraft_autoupdate_SERVER_ID и minecraft_autobackup_SERVER_ID
     if grep -q "$current_id" "$cron_temp"; then
-        # Используем sed для замены только целых слов ID, чтобы не задеть подстроки (хотя ID уникальны, лучше с пробелами)
-        # Формат в кроне: ... --auto-update OLD_ID ...
+        # Обновляем маркеры автообновления
+        sed -i "s/minecraft_autoupdate_${current_id}/minecraft_autoupdate_${new_id}/g" "$cron_temp"
+        # Обновляем аргументы команд
         sed -i "s/--auto-update $current_id /--auto-update $new_id /g" "$cron_temp"
-        sed -i "s/--auto-update $current_id$/--auto-update $new_id/g" "$cron_temp" # Если в конце строки
+        sed -i "s/--auto-update $current_id$/--auto-update $new_id/g" "$cron_temp"
         
         # Лог файлы в кроне тоже могут содержать ID
         sed -i "s/minecraft_update_${current_id}.log/minecraft_update_${new_id}.log/g" "$cron_temp"
         
-        # То же для бэкапов, если они есть
-        # (в текущей реализации setup_auto_backup не реализован полностью в деталях в этом чате, но предположим)
-        # Если есть другие задачи, завязанные на ID
+        # То же для бэкапов
+        sed -i "s/minecraft_autobackup_${current_id}/minecraft_autobackup_${new_id}/g" "$cron_temp"
+        sed -i "s/--auto-backup $current_id /--auto-backup $new_id /g" "$cron_temp"
+        sed -i "s/--auto-backup $current_id$/--auto-backup $new_id/g" "$cron_temp"
+        sed -i "s/minecraft_backup_${current_id}.log/minecraft_backup_${new_id}.log/g" "$cron_temp"
         
         sudo crontab "$cron_temp"
         msg "Cron обновлен."
@@ -3885,17 +3947,18 @@ setup_auto_backup() {
     msg "Эта функция добавит задание в cron для запуска этого скрипта с флагом --auto-backup."
     msg "Бэкапы будут создаваться для ВСЕХ серверов."
 
-    # Получаем полный путь к текущему скрипту
-    local script_path=$(readlink -f "$0")
+    # URL скрипта на GitHub (всегда актуальная версия)
+    local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
+    local cron_marker="minecraft_autobackup_all"
 
-    # Проверяем, есть ли уже задание
+    # Проверяем, есть ли уже задание (ищем по маркеру)
     local current_cron=$(sudo crontab -l 2>/dev/null)
-    if echo "$current_cron" | grep -q "$script_path --auto-backup"; then
+    if echo "$current_cron" | grep -Fq "$cron_marker"; then
         msg "Автобэкап уже настроен."
         read -p "Хотите удалить или изменить расписание? (delete/change/cancel): " ACTION
         if [[ "$ACTION" == "delete" ]]; then
-            # Удаляем строку с нашим скриптом
-            echo "$current_cron" | grep -v "$script_path --auto-backup" | sudo crontab -
+            # Удаляем строку по маркеру
+            echo "$current_cron" | grep -Fv "$cron_marker" | sudo crontab -
             msg "Автобэкап отключен."
             return 0
         elif [[ "$ACTION" != "change" ]]; then
@@ -3921,17 +3984,17 @@ setup_auto_backup() {
 
     if [ -z "$cron_schedule" ]; then error "Пустое расписание."; return 1; fi
 
-    # Формируем новую задачу
-    local new_job="$cron_schedule $script_path --auto-backup >> /var/log/minecraft_backup.log 2>&1"
+    # Формируем новую задачу с использованием curl
+    local new_job="$cron_schedule bash <(curl -Ls $script_url) --auto-backup >> /var/log/minecraft_backup.log 2>&1 # $cron_marker"
 
     # Удаляем старую задачу (если была) и добавляем новую
-    # Используем временный файл
     local temp_cron=$(mktemp)
-    sudo crontab -l 2>/dev/null | grep -v "$script_path --auto-backup" > "$temp_cron"
+    sudo crontab -l 2>/dev/null | grep -Fv "$cron_marker" > "$temp_cron"
     echo "$new_job" >> "$temp_cron"
     
     if sudo crontab "$temp_cron"; then
         msg "✅ Автобэкап успешно настроен: $cron_schedule"
+        msg "Скрипт будет скачиваться с GitHub при каждом запуске."
         msg "Логи будут писаться в /var/log/minecraft_backup.log"
     else
         error "Не удалось обновить crontab."
@@ -4111,6 +4174,10 @@ handle_command_args() {
         # ... (существующий код --auto-backup) ...
         # Используем echo для вывода в лог cron
         echo "--- Запуск автоматического резервного копирования $(date) ---"
+        
+        # Ротация лога если нужно
+        rotate_log_if_needed "/var/log/minecraft_backup.log"
+        
         # Автобэкап должен запускаться от root, поэтому check_root не нужен здесь,
         # но все команды внутри должны использовать sudo или быть выполнены от root
         # Проверка прав выполняется перед вызовом этой функции в основном коде
@@ -4305,11 +4372,11 @@ while true; do
     esac
 
     # Пауза только для неверных вариантов (не 1, 2, 3, 0)
-    if [[ "$choice" != "0" ]]; then
+     if [[ "$choice" != "0" ]]; then
         if ! [[ "$choice" =~ ^[1-3]$ ]]; then
             read -p "Нажмите Enter для продолжения..." DUMMY_VAR
-        fi
-    fi
+         fi
+     fi
 
 done
 
