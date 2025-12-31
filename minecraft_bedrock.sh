@@ -304,7 +304,11 @@ auto_update_server() {
     if [ "$mode" != "silent" ]; then msg "Последняя доступная версия: $latest_version"; fi
 
     if [ "$current_version" == "$latest_version" ]; then
-        if [ "$mode" != "silent" ]; then msg "✅ У вас уже установлена последняя версия."; fi
+        if [ "$mode" != "silent" ]; then
+            msg "✅ У вас уже установлена последняя версия."
+        else
+            echo "Auto-update: No update needed. Current version $current_version is latest."
+        fi
         return 0
     fi
 
