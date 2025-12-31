@@ -214,31 +214,50 @@ rotate_log_if_needed() {
 }
 
 # Автоматическое обновление
-# Проверка наличия онлайн игроков (по сетевым подключениям)
+# Проверка наличия онлайн игроков через команду сервера
 are_players_online() {
-    local port="$SERVER_PORT"
-    if [ -z "$port" ]; then return 1; fi
-
-    # Метод 1: ss (iproute2) - предпочтительно
-    if command -v ss >/dev/null; then
-        # -u: udp, -n: numeric, state established
-        # sport = :$port
-        if ss -u -n -H state established sport = :$port | grep -q "."; then
-            return 0 # Есть подключения
-        fi
-        return 1
+    local screen_name="bds_${ACTIVE_SERVER_ID}"
+    
+    # Проверяем, запущен ли сервер
+    if ! sudo systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        return 1 # Сервер не запущен = игроков нет
     fi
-
-    # Метод 2: netstat (net-tools)
-    if command -v netstat >/dev/null; then
-        # Ищем ESTABLISHED соединения на порту
-        if netstat -uan | grep ":$port " | grep -q "ESTABLISHED"; then
-             return 0
-        fi
+    
+    # Проверяем, существует ли screen сессия
+    if ! sudo -u "$SERVER_USER" screen -list 2>/dev/null | grep -q "$screen_name"; then
         return 1
     fi
     
-    return 1 # Если нечем проверить, считаем, что никого нет
+    # Создаём временный файл для вывода
+    local tmp_file="/tmp/mc_players_check_$$"
+    
+    # Отправляем команду list и ждём ответ
+    # Используем hardcopy для захвата вывода screen
+    sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "list^M" 2>/dev/null
+    sleep 1
+    sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X hardcopy "$tmp_file" 2>/dev/null
+    sleep 0.5
+    
+    if [ -f "$tmp_file" ]; then
+        # Ищем строку вида "There are X/Y players online:"
+        # Извлекаем число игроков универсальным способом
+        local line=$(grep "There are" "$tmp_file" 2>/dev/null | tail -1)
+        rm -f "$tmp_file"
+        
+        if [ -n "$line" ]; then
+            # Извлекаем первое число после "There are "
+            local player_count=$(echo "$line" | sed -n 's/.*There are \([0-9]*\).*/\1/p')
+            
+            if [ -n "$player_count" ] && [ "$player_count" -gt 0 ]; then
+                echo "Players online: $player_count"
+                return 0 # Есть игроки онлайн
+            fi
+        fi
+    else
+        rm -f "$tmp_file" 2>/dev/null
+    fi
+    
+    return 1 # Игроков нет или не удалось проверить
 }
 
 auto_update_server() {
