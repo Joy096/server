@@ -2952,32 +2952,27 @@ create_new_server() {
     msg "--- Создание нового сервера Minecraft Bedrock ---"
     # Мультисерверный режим теперь всегда активен, проверка MULTISERVER_ENABLED не нужна
 
-    local server_name server_id server_port new_dir new_service
+    local server_id server_display_name server_port new_dir new_service
     
-    # 1. Запрос Имени (используем как ID)
-    while [ -z "$server_name" ]; do
-        read -p "Введите уникальное имя для нового сервера (латиница, цифры, _, -): " server_name
-        # Очистка имени для использования в качестве ID (удаляем все кроме букв, цифр, _ и -)
-        local safe_id=$(echo "$server_name" | tr -cd '[:alnum:]_-')
+    # 1. Запрос ID сервера
+    while [ -z "$server_id" ]; do
+        read -p "Введите уникальный ID для нового сервера (латиница, цифры, _, -): " server_id
+        # Очистка ID (удаляем все кроме букв, цифр, _ и -)
+        server_id=$(echo "$server_id" | tr -cd '[:alnum:]_-')
         
-        if [ -z "$server_name" ]; then
-             warning "Имя не может быть пустым."
-        elif [ -z "$safe_id" ]; then
-             warning "Имя должно содержать хотя бы одну букву или цифру."
-             server_name=""
-        elif grep -q "^${safe_id}:" "$SERVERS_CONFIG_FILE" 2>/dev/null; then
-             warning "Сервер с ID '$safe_id' уже существует! Выберите другое имя."
-             server_name=""
-        else
-             # Если все ок, фиксируем ID и имя
-             server_id="$safe_id"
-             # server_name оставляем как ввел пользователь, но фактически для конфига используем server_id
-             # но в вашем запросе вы просили "имя как ID", так что сделаем их идентичными для простоты
-             server_name="$server_id"
+        if [ -z "$server_id" ]; then
+             warning "ID не может быть пустым и должен содержать хотя бы одну букву или цифру."
+        elif grep -q "^${server_id}:" "$SERVERS_CONFIG_FILE" 2>/dev/null; then
+             warning "Сервер с ID '$server_id' уже существует! Выберите другой ID."
+             server_id=""
         fi
     done
     
-    msg "Создается сервер с ID: $server_id"
+    # 2. Запрос отображаемого имени сервера (server-name в server.properties)
+    read -p "Введите имя сервера (отображается в игре) [$server_id]: " server_display_name
+    server_display_name=${server_display_name:-$server_id}
+    
+    msg "Создается сервер: ID=$server_id, Имя='$server_display_name'"
 
     # Запрос порта
     read -p "Введите порт для сервера (например, 19132): " server_port
@@ -3013,7 +3008,7 @@ create_new_server() {
     fi
 
     # Запускаем установку с новыми параметрами
-    msg "Установка нового сервера '$server_name' (ID: $server_id)..."
+    msg "Установка нового сервера '$server_display_name' (ID: $server_id)..."
     # install_bds сама создаст директорию, сервис, откроет порт
     if ! install_bds "$new_dir" "$new_service" "$server_port" "$local_zip"; then
         # install_bds должна была вывести свою ошибку
@@ -3027,12 +3022,19 @@ create_new_server() {
     # Проверяем успешность установки еще раз (файл bedrock_server должен появиться)
     if [ ! -f "$new_dir/bedrock_server" ]; then error "Установка вроде бы завершилась, но файл bedrock_server не найден в '$new_dir'."; return 1; fi
 
+    # Устанавливаем server-name в server.properties
+    local props_file="$new_dir/server.properties"
+    if [ -f "$props_file" ]; then
+        set_property "server-name" "$server_display_name" "$props_file"
+        msg "Имя сервера установлено: '$server_display_name'"
+    fi
+
     # Добавляем запись в конфигурацию
-    echo "${server_id}:${server_name}:${server_port}:${new_dir}:${new_service}" | sudo tee -a "$SERVERS_CONFIG_FILE" > /dev/null
-    msg "Сервер '$server_name' (ID: $server_id) добавлен в $SERVERS_CONFIG_FILE."
+    echo "${server_id}:${server_id}:${server_port}:${new_dir}:${new_service}" | sudo tee -a "$SERVERS_CONFIG_FILE" > /dev/null
+    msg "Сервер '$server_display_name' (ID: $server_id) добавлен в $SERVERS_CONFIG_FILE."
 
     # Предлагаем сделать его активным
-    read -p "Сделать '$server_name' активным сервером сейчас? (yes/no): " ACTIVATE_NEW
+    read -p "Сделать '$server_display_name' активным сервером сейчас? (yes/no): " ACTIVATE_NEW
     if [[ "$ACTIVATE_NEW" == "yes" ]]; then
         if ! load_server_config "$server_id"; then
              warning "Не удалось автоматически активировать новый сервер."
@@ -3115,9 +3117,46 @@ delete_server() {
     return 0
 }
 
+# Изменение имени сервера (server-name в server.properties)
+rename_server_display_name() {
+    msg "--- Изменение имени сервера (отображается в игре) ---"
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+    
+    local props_file="$DEFAULT_INSTALL_DIR/server.properties"
+    if [ ! -f "$props_file" ]; then
+        error "Файл server.properties не найден."
+        return 1
+    fi
+    
+    local current_name=$(get_property "server-name" "$props_file" "Dedicated Server")
+    msg "Текущее имя сервера: '$current_name'"
+    
+    read -p "Введите новое имя сервера [$current_name]: " new_name
+    new_name=${new_name:-$current_name}
+    
+    if [ "$new_name" == "$current_name" ]; then
+        msg "Имя не изменилось."
+        return 0
+    fi
+    
+    set_property "server-name" "$new_name" "$props_file"
+    msg "✅ Имя сервера изменено: '$current_name' → '$new_name'"
+    
+    # Проверяем, запущен ли сервер
+    if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
+        msg "⚠️ Для применения изменений требуется перезапуск сервера."
+        read -p "Перезапустить сервер сейчас? (yes/no): " RESTART_NOW
+        if [[ "$RESTART_NOW" == "yes" ]]; then
+            restart_server
+        fi
+    fi
+    
+    return 0
+}
+
 # Изменение ID сервера (переименование)
 rename_server_id() {
-    msg "--- Изменение ID (имени) сервера ---"
+    msg "--- Изменение ID сервера ---"
     if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
 
     local current_id="$ACTIVE_SERVER_ID"
@@ -3371,13 +3410,15 @@ manage_all_servers() {
 active_server_menu() {
     if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
     while true; do
-        echo ""; echo "--- Управление Активным Сервером (ID: $ACTIVE_SERVER_ID) ---"
+        local display_name=$(get_property "server-name" "$DEFAULT_INSTALL_DIR/server.properties" "$ACTIVE_SERVER_ID")
+        echo ""; echo "--- Управление Активным Сервером (ID: $ACTIVE_SERVER_ID, Имя: $display_name) ---"
         echo "1. Состояние / Запуск / Остановка"
         echo "2. Настройки сервера (server.properties)"
         echo "3. Управление игроками (Whitelist/OP)"
         echo "4. Резервные копии"
         echo "5. Обновление сервера"
-        echo "6. Изменить ID сервера (Переименовать)"
+        echo "6. Изменить ID сервера"
+        echo "7. Изменить имя сервера (в игре)"
         echo "0. Назад"
         
         local choice; read -p "Опция: " choice
@@ -3419,6 +3460,7 @@ active_server_menu() {
                 done
                 ;;
             6) rename_server_id ;;
+            7) rename_server_display_name ;;
             0) return 0 ;;
             *) msg "Неверно." ;;
         esac
@@ -4343,13 +4385,19 @@ while true; do
          if [ -f "$DEFAULT_INSTALL_DIR/version" ]; then
              current_v=$(cat "$DEFAULT_INSTALL_DIR/version")
          fi
+         
+         # Получаем имя сервера из server.properties
+         display_name="$ACTIVE_SERVER_ID"
+         if [ -f "$DEFAULT_INSTALL_DIR/server.properties" ]; then
+             display_name=$(get_property "server-name" "$DEFAULT_INSTALL_DIR/server.properties" "$ACTIVE_SERVER_ID")
+         fi
 
          status_icon="ОСТАНОВЛЕН 🔴"
          if sudo systemctl is-active --quiet "$SERVICE_NAME"; then
              status_icon="АКТИВЕН ✅"
          fi
          
-         SERVER_STATUS_LINE="Статус: ID: $ACTIVE_SERVER_ID | Версия: $current_v | $status_icon"
+         SERVER_STATUS_LINE="Сервер: $display_name (ID: $ACTIVE_SERVER_ID) | Версия: $current_v | $status_icon"
          
          # Попытка определить внешний IP
          # Используем внешний сервис для определения публичного IP, с таймаутом
