@@ -2969,8 +2969,8 @@ create_new_server() {
     done
     
     # 2. Запрос отображаемого имени сервера (server-name в server.properties)
-    read -p "Введите имя сервера (отображается в игре) [$server_id]: " server_display_name
-    server_display_name=${server_display_name:-$server_id}
+    read -p "Введите имя сервера (отображается в игре) [Dedicated Server]: " server_display_name
+    server_display_name=${server_display_name:-"Dedicated Server"}
     
     msg "Создается сервер: ID=$server_id, Имя='$server_display_name'"
 
