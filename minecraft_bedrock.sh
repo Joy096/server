@@ -2710,7 +2710,7 @@ setup_auto_update() {
     local cron_marker="minecraft_autoupdate_${ACTIVE_SERVER_ID}"
     # Новые записи добавляются в начало лога (свежее сверху)
     local log_file="/var/log/minecraft_update_${ACTIVE_SERVER_ID}.log"
-    local cron_cmd="tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-update $ACTIVE_SERVER_ID > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
+    local cron_cmd="tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-update $ACTIVE_SERVER_ID > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
     
     # Проверяем, есть ли уже задача (ищем по маркеру)
     if sudo crontab -l 2>/dev/null | grep -Fq "$cron_marker"; then
@@ -4070,7 +4070,7 @@ setup_auto_backup() {
     # Формируем новую задачу с использованием curl
     # Новые записи добавляются в начало лога (свежее сверху)
     local log_file="/var/log/minecraft_backup.log"
-    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
+    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
 
     # Удаляем старую задачу (если была) и добавляем новую
     local temp_cron=$(mktemp)
