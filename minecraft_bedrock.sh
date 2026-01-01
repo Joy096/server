@@ -972,7 +972,19 @@ create_backup() {
     local backup_path="$BACKUP_DIR/$backup_name"
     local source_path="$DEFAULT_INSTALL_DIR"
     local worlds_path="$DEFAULT_INSTALL_DIR/worlds"
-    local COMPRESS_TYPE="zip" # или tar.gz
+    
+    # Определяем тип архива (используем tar.gz если zip не установлен)
+    local COMPRESS_TYPE="zip"
+    if ! command -v zip &> /dev/null; then
+        # Пытаемся установить zip
+        if sudo apt-get install -y zip > /dev/null 2>&1; then
+            COMPRESS_TYPE="zip"
+        else
+            # Fallback на tar.gz (всегда доступен)
+            COMPRESS_TYPE="tar.gz"
+            warning "zip не установлен, используется tar.gz"
+        fi
+    fi
 
     msg "--- Создание резервной копии сервера (ID: $ACTIVE_SERVER_ID) ---"
     if ! is_server_installed; then error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен."; return 1; fi
@@ -1045,23 +1057,32 @@ create_backup() {
     echo "Original Path: $DEFAULT_INSTALL_DIR" >> "$backup_path/backup_info.txt"
 
     # Архивирование
-    msg "Архивирование резервной копии..."
+    msg "Архивирование резервной копии ($COMPRESS_TYPE)..."
     local archive_path="$BACKUP_DIR/${backup_name}.${COMPRESS_TYPE}"
-    cd "$BACKUP_DIR" # Переходим в директорию бэкапов для корректных путей в архиве
-    if [[ "$COMPRESS_TYPE" == "zip" ]]; then
-        # Архивируем содержимое папки backup_name в архив с таким же именем + .zip
-        if ! sudo zip -r "$archive_path" "$backup_name" > /dev/null; then warning "Ошибка при создании zip-архива."; fi
-    else # tar.gz
-        if ! sudo tar -czf "$archive_path" "$backup_name" > /dev/null; then warning "Ошибка при создании tar.gz-архива."; fi
+    local archive_success=false
+    
+    # Переходим в директорию бэкапов для корректных путей в архиве
+    if cd "$BACKUP_DIR" 2>/dev/null; then
+        if [[ "$COMPRESS_TYPE" == "zip" ]]; then
+            if sudo zip -r "$archive_path" "$backup_name" > /dev/null 2>&1; then
+                archive_success=true
+            fi
+        else # tar.gz
+            if sudo tar -czf "$archive_path" "$backup_name" > /dev/null 2>&1; then
+                archive_success=true
+            fi
+        fi
+        cd - > /dev/null 2>&1
     fi
-    cd - > /dev/null # Возвращаемся обратно
 
-    # Удаляем временную папку
-    sudo rm -rf "$backup_path"
+    # ВСЕГДА удаляем временную папку (даже при ошибке архивирования)
+    if [ -d "$backup_path" ]; then
+        sudo rm -rf "$backup_path"
+    fi
 
     # Проверка результата и установка прав
-    if [ -f "$archive_path" ]; then
-        if ! sudo chown "$SERVER_USER":"$SERVER_USER" "$archive_path"; then warning "Не удалось изменить владельца архива $archive_path"; fi
+    if $archive_success && [ -f "$archive_path" ]; then
+        if ! sudo chown "$SERVER_USER":"$SERVER_USER" "$archive_path" 2>/dev/null; then warning "Не удалось изменить владельца архива"; fi
         local archive_size=$(du -h "$archive_path" | cut -f1)
         msg "✅ Резервная копия успешно создана: $archive_path ($archive_size)"
     else
