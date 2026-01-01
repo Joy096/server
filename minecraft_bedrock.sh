@@ -13,7 +13,7 @@ SERVER_USER="minecraft"
 
 # Настройки резервного копирования (глобальные для всех серверов)
 BACKUP_DIR="/opt/minecraft_bds_backups"
-MAX_BACKUPS=10
+MAX_BACKUPS_PER_SERVER=3  # Максимум бэкапов для КАЖДОГО сервера отдельно
 BACKUP_WORLDS_ONLY=false # false = полный бэкап, true = только папка worlds
 
 # Настройки Мультисерверного Режима (теперь всегда активен)
@@ -230,6 +230,50 @@ prepend_to_log() {
 }
 
 # Автоматическое обновление
+# Получение количества онлайн игроков (возвращает число)
+get_player_count() {
+    local screen_name="bds_${ACTIVE_SERVER_ID}"
+    
+    # Проверяем, запущен ли сервер
+    if ! sudo systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
+        echo "0"
+        return 0
+    fi
+    
+    # Проверяем, существует ли screen сессия
+    if ! sudo -u "$SERVER_USER" screen -list 2>/dev/null | grep -q "$screen_name"; then
+        echo "0"
+        return 0
+    fi
+    
+    # Создаём временный файл для вывода
+    local tmp_file="/tmp/mc_players_count_$$"
+    
+    # Отправляем команду list и ждём ответ
+    sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X stuff "list^M" 2>/dev/null
+    sleep 1
+    sudo -u "$SERVER_USER" screen -S "$screen_name" -p 0 -X hardcopy "$tmp_file" 2>/dev/null
+    sleep 0.5
+    
+    local player_count=0
+    if [ -f "$tmp_file" ]; then
+        # Ищем строку вида "There are X/Y players online:"
+        local line=$(grep "There are" "$tmp_file" 2>/dev/null | tail -1)
+        rm -f "$tmp_file"
+        
+        if [ -n "$line" ]; then
+            player_count=$(echo "$line" | sed -n 's/.*There are \([0-9]*\).*/\1/p')
+            if [ -z "$player_count" ]; then
+                player_count=0
+            fi
+        fi
+    else
+        rm -f "$tmp_file" 2>/dev/null
+    fi
+    
+    echo "$player_count"
+}
+
 # Проверка наличия онлайн игроков через команду сервера
 are_players_online() {
     local screen_name="bds_${ACTIVE_SERVER_ID}"
@@ -1195,30 +1239,52 @@ restore_backup() {
     return 0
 }
 
-# Ротация резервных копий (удаление старых)
+# Ротация резервных копий (удаление старых) - для КАЖДОГО сервера отдельно
 rotate_backups() {
-    msg "Проверка ротации резервных копий (Макс: $MAX_BACKUPS)..."
+    msg "Проверка ротации резервных копий (Макс: $MAX_BACKUPS_PER_SERVER на сервер)..."
     if [ ! -d "$BACKUP_DIR" ]; then return 0; fi
 
-    # Получаем список бэкапов, отсортированный по времени (старые в конце), пропускаем первые MAX_BACKUPS
-    # ls -t: сортировка по времени (новые сверху)
-    # tail -n +$((MAX_BACKUPS + 1)): берем все, начиная с (MAX+1)-го
-    local backups_to_delete=$(ls -t "$BACKUP_DIR"/*.zip "$BACKUP_DIR"/*.tar.gz 2>/dev/null | tail -n +$((MAX_BACKUPS + 1)))
+    # Получаем список всех уникальных server_id из имён бэкапов
+    # Формат имени: backup_<server_id>_<дата>_<время>.zip
+    local server_ids=$(ls "$BACKUP_DIR"/backup_*.zip "$BACKUP_DIR"/backup_*.tar.gz 2>/dev/null | \
+        xargs -I {} basename {} | \
+        sed -n 's/^backup_\([^_]*\)_.*/\1/p' | \
+        sort -u)
+    
+    if [ -z "$server_ids" ]; then
+        msg "Бэкапы не найдены."
+        return 0
+    fi
 
-    if [ -n "$backups_to_delete" ]; then
-        msg "Удаление старых резервных копий..."
-        # Устанавливаем IFS на перевод строки, чтобы корректно обрабатывать имена файлов с пробелами
-        local OLD_IFS=$IFS
-        IFS=$'\n'
-        for backup in $backups_to_delete; do
-            if [ -f "$backup" ]; then
-                sudo rm "$backup"
-                msg "Удален старый бэкап: $(basename "$backup")"
-            fi
-        done
-        IFS=$OLD_IFS
-    else
+    local total_deleted=0
+    
+    # Для каждого сервера проверяем количество бэкапов
+    for server_id in $server_ids; do
+        # Получаем бэкапы этого сервера, отсортированные по времени (новые сверху)
+        local server_backups=$(ls -t "$BACKUP_DIR"/backup_${server_id}_*.zip "$BACKUP_DIR"/backup_${server_id}_*.tar.gz 2>/dev/null)
+        local backup_count=$(echo "$server_backups" | grep -c .)
+        
+        if [ "$backup_count" -gt "$MAX_BACKUPS_PER_SERVER" ]; then
+            # Оставляем первые MAX_BACKUPS_PER_SERVER, остальные удаляем
+            local backups_to_delete=$(echo "$server_backups" | tail -n +$((MAX_BACKUPS_PER_SERVER + 1)))
+            
+            local OLD_IFS=$IFS
+            IFS=$'\n'
+            for backup in $backups_to_delete; do
+                if [ -f "$backup" ]; then
+                    sudo rm "$backup"
+                    msg "Удалён бэкап сервера '$server_id': $(basename "$backup")"
+                    ((total_deleted++))
+                fi
+            done
+            IFS=$OLD_IFS
+        fi
+    done
+    
+    if [ "$total_deleted" -eq 0 ]; then
         msg "Ротация не требуется."
+    else
+        msg "Удалено старых бэкапов: $total_deleted"
     fi
 }
 
@@ -3273,11 +3339,17 @@ rename_server_id() {
         # Лог файлы в кроне тоже могут содержать ID
         sed -i "s/minecraft_update_${current_id}.log/minecraft_update_${new_id}.log/g" "$cron_temp"
         
-        # То же для бэкапов
+        # То же для бэкапов (маркеры и аргументы)
         sed -i "s/minecraft_autobackup_${current_id}/minecraft_autobackup_${new_id}/g" "$cron_temp"
-        sed -i "s/--auto-backup $current_id /--auto-backup $new_id /g" "$cron_temp"
-        sed -i "s/--auto-backup $current_id$/--auto-backup $new_id/g" "$cron_temp"
+        sed -i "s/--auto-backup-server $current_id /--auto-backup-server $new_id /g" "$cron_temp"
+        sed -i "s/--auto-backup-server $current_id$/--auto-backup-server $new_id/g" "$cron_temp"
         sed -i "s/minecraft_backup_${current_id}.log/minecraft_backup_${new_id}.log/g" "$cron_temp"
+        
+        # Бэкап при выходе последнего игрока
+        sed -i "s/minecraft_emptybackup_${current_id}/minecraft_emptybackup_${new_id}/g" "$cron_temp"
+        sed -i "s/--check-empty-backup $current_id /--check-empty-backup $new_id /g" "$cron_temp"
+        sed -i "s/--check-empty-backup $current_id$/--check-empty-backup $new_id/g" "$cron_temp"
+        sed -i "s/minecraft_emptybackup_${current_id}.log/minecraft_emptybackup_${new_id}.log/g" "$cron_temp"
         
         sudo crontab "$cron_temp"
         msg "Cron обновлен."
@@ -3285,6 +3357,11 @@ rename_server_id() {
         msg "Задач Cron для этого сервера не найдено."
     fi
     rm "$cron_temp"
+    
+    # 5.5. Переименование файла состояния игроков (для авто-бэкапа при выходе)
+    if [ -f "/tmp/mc_player_state_${current_id}" ]; then
+        mv "/tmp/mc_player_state_${current_id}" "/tmp/mc_player_state_${new_id}" 2>/dev/null
+    fi
 
     # 6. Обновление текущего состояния
     msg "Переключение активного сервера на новый ID..."
@@ -4078,9 +4155,152 @@ setup_auto_backup() {
     echo "$new_job" >> "$temp_cron"
     
     if sudo crontab "$temp_cron"; then
-        msg "✅ Автобэкап успешно настроен: $cron_schedule"
-        msg "Скрипт будет скачиваться с GitHub при каждом запуске."
-        msg "Логи будут писаться в /var/log/minecraft_backup.log"
+        msg "✅ Автобэкап для ВСЕХ серверов успешно настроен!"
+        msg "   Расписание: $cron_schedule"
+        msg "   Хранилище: $BACKUP_DIR"
+        msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
+        msg "   Логи: $log_file"
+    else
+        error "Не удалось обновить crontab."
+    fi
+    rm -f "$temp_cron"
+}
+
+# Настройка автоматического резервного копирования для АКТИВНОГО сервера (cron)
+setup_auto_backup_server() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+    
+    msg "--- Настройка Авто-Бэкапа для сервера '$ACTIVE_SERVER_ID' ---"
+    msg "Эта функция добавит задание в cron для автоматического бэкапа ТОЛЬКО этого сервера."
+
+    # URL скрипта на GitHub (всегда актуальная версия)
+    local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
+    local cron_marker="minecraft_autobackup_${ACTIVE_SERVER_ID}"
+
+    # Проверяем, есть ли уже задание (ищем по маркеру)
+    local current_cron=$(sudo crontab -l 2>/dev/null)
+    if echo "$current_cron" | grep -Fq "$cron_marker"; then
+        msg "Авто-бэкап для сервера '$ACTIVE_SERVER_ID' уже настроен."
+        read -p "Хотите удалить или изменить расписание? (delete/change/cancel): " ACTION
+        if [[ "$ACTION" == "delete" ]]; then
+            # Удаляем строку по маркеру
+            echo "$current_cron" | grep -Fv "$cron_marker" | sudo crontab -
+            msg "Авто-бэкап для '$ACTIVE_SERVER_ID' отключен."
+            return 0
+        elif [[ "$ACTION" != "change" ]]; then
+            return 0
+        fi
+    fi
+
+    echo "Выберите частоту бэкапов:"
+    echo "1. Ежедневно в 04:00"
+    echo "2. Каждые 12 часов (04:00 и 16:00)"
+    echo "3. Еженедельно (воскресенье в 04:00)"
+    echo "4. Ввести свое выражение cron"
+    read -p "Ваш выбор: " choice
+
+    local cron_schedule=""
+    case $choice in
+        1) cron_schedule="0 4 * * *" ;;
+        2) cron_schedule="0 4,16 * * *" ;;
+        3) cron_schedule="0 4 * * 0" ;;
+        4) read -p "Введите выражение cron (например, '30 2 * * *'): " cron_schedule ;;
+        *) msg "Неверный выбор."; return 1 ;;
+    esac
+
+    if [ -z "$cron_schedule" ]; then error "Пустое расписание."; return 1; fi
+
+    # Формируем новую задачу с использованием curl
+    # Новые записи добавляются в начало лога (свежее сверху)
+    local log_file="/var/log/minecraft_backup_${ACTIVE_SERVER_ID}.log"
+    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup-server $ACTIVE_SERVER_ID > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
+
+    # Удаляем старую задачу (если была) и добавляем новую
+    local temp_cron=$(mktemp)
+    sudo crontab -l 2>/dev/null | grep -Fv "$cron_marker" > "$temp_cron"
+    echo "$new_job" >> "$temp_cron"
+    
+    if sudo crontab "$temp_cron"; then
+        msg "✅ Авто-бэкап для '$ACTIVE_SERVER_ID' успешно настроен!"
+        msg "   Расписание: $cron_schedule"
+        msg "   Хранилище: $BACKUP_DIR"
+        msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
+        msg "   Логи: $log_file"
+    else
+        error "Не удалось обновить crontab."
+    fi
+    rm -f "$temp_cron"
+}
+
+# Настройка автобэкапа при выходе последнего игрока
+setup_auto_backup_on_empty() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+    
+    msg "--- Настройка Авто-Бэкапа при выходе последнего игрока ---"
+    msg "Сервер: '$ACTIVE_SERVER_ID'"
+    msg ""
+    msg "Как это работает:"
+    msg "  • Cron проверяет количество игроков каждые N минут"
+    msg "  • Если игроки были, а теперь сервер пуст → создаётся бэкап"
+    msg "  • Не более одного бэкапа за сессию (пока кто-то не зайдёт снова)"
+
+    # URL скрипта на GitHub
+    local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
+    local cron_marker="minecraft_emptybackup_${ACTIVE_SERVER_ID}"
+
+    # Проверяем, есть ли уже задание
+    local current_cron=$(sudo crontab -l 2>/dev/null)
+    if echo "$current_cron" | grep -Fq "$cron_marker"; then
+        msg ""
+        msg "Авто-бэкап при выходе игроков для '$ACTIVE_SERVER_ID' уже настроен."
+        read -p "Хотите удалить или изменить интервал? (delete/change/cancel): " ACTION
+        if [[ "$ACTION" == "delete" ]]; then
+            echo "$current_cron" | grep -Fv "$cron_marker" | sudo crontab -
+            # Удаляем файл состояния
+            sudo rm -f "/tmp/mc_player_state_${ACTIVE_SERVER_ID}" 2>/dev/null
+            msg "Авто-бэкап при выходе игроков для '$ACTIVE_SERVER_ID' отключен."
+            return 0
+        elif [[ "$ACTION" != "change" ]]; then
+            return 0
+        fi
+    fi
+
+    echo ""
+    echo "Выберите интервал проверки:"
+    echo "1. Каждую минуту (быстрая реакция, больше нагрузка)"
+    echo "2. Каждые 2 минуты (рекомендуется)"
+    echo "3. Каждые 5 минут (меньше нагрузка)"
+    echo "4. Каждые 10 минут"
+    read -p "Ваш выбор [2]: " choice
+    choice=${choice:-2}
+
+    local cron_schedule=""
+    case $choice in
+        1) cron_schedule="* * * * *" ;;
+        2) cron_schedule="*/2 * * * *" ;;
+        3) cron_schedule="*/5 * * * *" ;;
+        4) cron_schedule="*/10 * * * *" ;;
+        *) msg "Неверный выбор, используется 2 минуты."; cron_schedule="*/2 * * * *" ;;
+    esac
+
+    # Формируем задачу
+    local log_file="/var/log/minecraft_emptybackup_${ACTIVE_SERVER_ID}.log"
+    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --check-empty-backup $ACTIVE_SERVER_ID > \$tmp 2>&1; if [ -s \$tmp ]; then { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; fi; rm -f \$tmp # $cron_marker"
+
+    # Удаляем старую задачу и добавляем новую
+    local temp_cron=$(mktemp)
+    sudo crontab -l 2>/dev/null | grep -Fv "$cron_marker" > "$temp_cron"
+    echo "$new_job" >> "$temp_cron"
+    
+    if sudo crontab "$temp_cron"; then
+        msg ""
+        msg "✅ Авто-бэкап при выходе последнего игрока настроен!"
+        msg "   Интервал проверки: $cron_schedule"
+        msg "   Хранилище: $BACKUP_DIR"
+        msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
+        msg "   Логи: $log_file"
+        msg ""
+        msg "Бэкап будет создан автоматически, когда последний игрок покинет сервер."
     else
         error "Не удалось обновить crontab."
     fi
@@ -4332,6 +4552,82 @@ handle_command_args() {
             echo "Ошибка: Не удалось загрузить конфигурацию сервера $target_server_id." >&2; exit 1
         fi
         exit 0
+    elif [ "$1" == "--auto-backup-server" ]; then
+        local target_server_id="$2"
+        echo "--- Запуск автоматического резервного копирования $(date) ---"
+        
+        # Ротация лога если нужно
+        local log_file="/var/log/minecraft_backup_${target_server_id}.log"
+        rotate_log_if_needed "$log_file"
+        
+        if [ -z "$target_server_id" ]; then
+            echo "Ошибка: Не указан ID сервера для бэкапа." >&2; exit 1
+        fi
+
+        # Загружаем конфиг сервера
+        if load_server_config "$target_server_id"; then
+            echo "Создание бэкапа для сервера '$target_server_id'..."
+            if create_backup; then
+                echo "✅ Бэкап для '$target_server_id' успешно создан."
+                exit 0
+            else
+                echo "Ошибка при создании бэкапа для '$target_server_id'." >&2
+                exit 1
+            fi
+        else
+            echo "Ошибка: Не удалось загрузить конфигурацию сервера $target_server_id." >&2; exit 1
+        fi
+    elif [ "$1" == "--check-empty-backup" ]; then
+        # Проверка игроков и бэкап при выходе последнего
+        local target_server_id="$2"
+        
+        if [ -z "$target_server_id" ]; then
+            exit 1
+        fi
+
+        # Загружаем конфиг сервера
+        if ! load_server_config "$target_server_id"; then
+            exit 1
+        fi
+        
+        # Файл состояния для хранения предыдущего количества игроков
+        local state_file="/tmp/mc_player_state_${target_server_id}"
+        
+        # Получаем текущее количество игроков
+        local current_count=$(get_player_count)
+        
+        # Читаем предыдущее количество (0 если файла нет)
+        local prev_count=0
+        if [ -f "$state_file" ]; then
+            prev_count=$(cat "$state_file" 2>/dev/null)
+            # Проверяем что это число
+            if ! [[ "$prev_count" =~ ^[0-9]+$ ]]; then
+                prev_count=0
+            fi
+        fi
+        
+        # Сохраняем текущее состояние
+        echo "$current_count" > "$state_file"
+        
+        # Логика: если были игроки (prev > 0) и теперь нет (current == 0) → бэкап
+        if [ "$prev_count" -gt 0 ] && [ "$current_count" -eq 0 ]; then
+            echo "--- Авто-бэкап: последний игрок вышел $(date) ---"
+            echo "Сервер: $target_server_id"
+            echo "Игроков было: $prev_count, сейчас: $current_count"
+            echo "Создание резервной копии..."
+            
+            # Ротация лога
+            local log_file="/var/log/minecraft_emptybackup_${target_server_id}.log"
+            rotate_log_if_needed "$log_file"
+            
+            if create_backup; then
+                echo "✅ Бэкап успешно создан!"
+            else
+                echo "❌ Ошибка при создании бэкапа." >&2
+            fi
+        fi
+        # Если ничего не выводим, лог не обновляется (см. условие if [ -s $tmp ] в cron)
+        exit 0
     fi
     # Здесь можно добавить обработку других аргументов в будущем
     # Если аргумент не распознан, просто возвращаемся
@@ -4342,13 +4638,16 @@ handle_command_args() {
 full_backup_menu() {
     while true; do
         echo ""; echo "--- Управление Резервными Копиями ---"
+        echo "Хранилище: $BACKUP_DIR (макс. $MAX_BACKUPS_PER_SERVER копий на сервер)"
+        echo "-----------------------------------"
         echo "1. Создать копию активного сервера (ID: ${ACTIVE_SERVER_ID:-не выбран})"
         echo "2. Восстановить активный сервер из копии"
-        echo "3. Удалить резервную копию"
-        echo "4. Список ВСЕХ резервных копий"
-        echo "5. Настроить авто-бэкап (для всех серверов)"
-        echo "0. Назад в главное меню"
+        echo "3. Список ВСЕХ резервных копий"
         echo "-----------------------------------"
+        echo "4. Авто-бэкап для активного сервера"
+        echo "5. Авто-бэкап для ВСЕХ серверов (по расписанию)"
+        echo "-----------------------------------"
+        echo "0. Назад в главное меню"
         
         local backup_choice; read -p "Выберите опцию: " backup_choice
         case $backup_choice in
@@ -4358,14 +4657,28 @@ full_backup_menu() {
             2) 
                 if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; else restore_backup; fi 
                 ;;
-            3) 
-                # delete_backup требует активного сервера для контекста или можно доработать, но пока оставим проверку
-                # В текущей реализации delete_backup спрашивает какую копию удалить из списка, 
-                # но список часто фильтруется. В функции delete_backup есть проверка на active server id?
-                # Посмотрим... функция delete_backup требует ACTIVE_SERVER_ID.
-                if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; else delete_backup; fi
+            3) list_backups ;;
+            4) 
+                if [ -z "$ACTIVE_SERVER_ID" ]; then 
+                    error "Активный сервер не выбран."
+                else 
+                    # Подменю авто-бэкапа для активного сервера
+                    while true; do
+                        echo ""; echo "--- Авто-бэкап для сервера '$ACTIVE_SERVER_ID' ---"
+                        echo "1. По расписанию (ежедневно, еженедельно и т.д.)"
+                        echo "2. При выходе последнего игрока"
+                        echo "0. Назад"
+                        local auto_choice; read -p "Выберите опцию: " auto_choice
+                        case $auto_choice in
+                            1) setup_auto_backup_server ;;
+                            2) setup_auto_backup_on_empty ;;
+                            0) break ;;
+                            *) msg "Неверно." ;;
+                        esac
+                        if [[ "$auto_choice" != "0" ]]; then read -p "Нажмите Enter..." DUMMY; fi
+                    done
+                fi
                 ;;
-            4) list_backups ;;
             5) setup_auto_backup ;;
             0) return 0 ;;
             *) msg "Неверно.";;
