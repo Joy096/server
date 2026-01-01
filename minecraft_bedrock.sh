@@ -196,7 +196,7 @@ perform_update_core() {
     return 0
 }
 
-# Ротация лог-файла (если больше 1MB — оставить последние 1000 строк)
+# Ротация лог-файла (если больше 1MB — оставить первые 1000 строк, т.к. новые записи сверху)
 rotate_log_if_needed() {
     local log_file="$1"
     local max_size=1048576  # 1MB в байтах
@@ -208,8 +208,24 @@ rotate_log_if_needed() {
     
     local file_size=$(stat -c%s "$log_file" 2>/dev/null || echo 0)
     if [ "$file_size" -gt "$max_size" ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Log rotation: file size ${file_size} bytes > ${max_size}, keeping last ${keep_lines} lines"
-        tail -n "$keep_lines" "$log_file" > "${log_file}.tmp" && mv "${log_file}.tmp" "$log_file"
+        # Новые записи сверху, поэтому оставляем первые строки (head), а не последние
+        head -n "$keep_lines" "$log_file" > "${log_file}.tmp" && mv "${log_file}.tmp" "$log_file"
+        # Добавляем пометку о ротации в начало
+        { echo "[$(date '+%Y-%m-%d %H:%M:%S')] === Log rotation: kept first ${keep_lines} lines ==="; cat "$log_file"; } > "${log_file}.tmp" && mv "${log_file}.tmp" "$log_file"
+    fi
+}
+
+# Добавление записи в начало лог-файла (новые записи сверху)
+prepend_to_log() {
+    local log_file="$1"
+    local content="$2"
+    
+    if [ -z "$log_file" ]; then return 1; fi
+    
+    if [ -f "$log_file" ]; then
+        { echo "$content"; cat "$log_file"; } > "${log_file}.tmp" && mv "${log_file}.tmp" "$log_file"
+    else
+        echo "$content" > "$log_file"
     fi
 }
 
@@ -2692,7 +2708,9 @@ setup_auto_update() {
     # URL скрипта на GitHub (всегда актуальная версия)
     local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
     local cron_marker="minecraft_autoupdate_${ACTIVE_SERVER_ID}"
-    local cron_cmd="curl -Ls $script_url | bash -s -- --auto-update $ACTIVE_SERVER_ID >> /var/log/minecraft_update_${ACTIVE_SERVER_ID}.log 2>&1 # $cron_marker"
+    # Новые записи добавляются в начало лога (свежее сверху)
+    local log_file="/var/log/minecraft_update_${ACTIVE_SERVER_ID}.log"
+    local cron_cmd="tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-update $ACTIVE_SERVER_ID > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
     
     # Проверяем, есть ли уже задача (ищем по маркеру)
     if sudo crontab -l 2>/dev/null | grep -Fq "$cron_marker"; then
@@ -4050,7 +4068,9 @@ setup_auto_backup() {
     if [ -z "$cron_schedule" ]; then error "Пустое расписание."; return 1; fi
 
     # Формируем новую задачу с использованием curl
-    local new_job="$cron_schedule curl -Ls $script_url | bash -s -- --auto-backup >> /var/log/minecraft_backup.log 2>&1 # $cron_marker"
+    # Новые записи добавляются в начало лога (свежее сверху)
+    local log_file="/var/log/minecraft_backup.log"
+    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
 
     # Удаляем старую задачу (если была) и добавляем новую
     local temp_cron=$(mktemp)
