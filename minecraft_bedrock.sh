@@ -16,6 +16,10 @@ BACKUP_DIR="/opt/minecraft_bds_backups"
 MAX_BACKUPS_PER_SERVER=3  # Максимум бэкапов для КАЖДОГО сервера отдельно
 BACKUP_WORLDS_ONLY=false # false = полный бэкап, true = только папка worlds
 
+# Настройки Google Drive (rclone)
+RCLONE_REMOTE_NAME="gdrive"  # Имя remote в rclone config
+GDRIVE_BACKUP_DIR="minecraft_bds_backups"  # Папка на Google Drive
+
 # Настройки Мультисерверного Режима (теперь всегда активен)
 MULTISERVER_ENABLED=true # Этот флаг теперь всегда true
 SERVERS_CONFIG_DIR="/etc/minecraft_servers"
@@ -57,6 +61,301 @@ check_root() {
     if [[ $EUID -ne 0 ]]; then
         echo -e "❌ Этот скрипт нужно запускать с правами root (используйте sudo)." >&2
         exit 1 # Запуск без root - фатально
+    fi
+}
+
+# --- Функции для работы с Google Drive (rclone) ---
+
+# Проверка установлен ли rclone
+is_rclone_installed() {
+    command -v rclone &>/dev/null
+}
+
+# Проверка настроен ли remote для Google Drive
+is_gdrive_configured() {
+    if ! is_rclone_installed; then
+        return 1
+    fi
+    rclone listremotes 2>/dev/null | grep -q "^${RCLONE_REMOTE_NAME}:"
+}
+
+# Установка rclone
+install_rclone() {
+    msg "Установка rclone..."
+    
+    if is_rclone_installed; then
+        msg "rclone уже установлен: $(rclone version | head -1)"
+        return 0
+    fi
+    
+    # Установка через официальный скрипт
+    if curl -s https://rclone.org/install.sh | sudo bash; then
+        msg "✅ rclone успешно установлен!"
+        return 0
+    else
+        error "Не удалось установить rclone"
+        return 1
+    fi
+}
+
+# Настройка Google Drive в rclone
+setup_gdrive_rclone() {
+    msg "--- Настройка Google Drive для резервных копий ---"
+    
+    # Проверяем/устанавливаем rclone
+    if ! is_rclone_installed; then
+        if ! install_rclone; then
+            return 1
+        fi
+    fi
+    
+    # Проверяем, настроен ли уже
+    if is_gdrive_configured; then
+        msg "Google Drive уже настроен (remote: ${RCLONE_REMOTE_NAME})"
+        read -p "Хотите перенастроить? (yes/no): " RECONFIGURE
+        if [[ "$RECONFIGURE" != "yes" ]]; then
+            return 0
+        fi
+        # Удаляем старый remote
+        rclone config delete "$RCLONE_REMOTE_NAME" 2>/dev/null
+    fi
+    
+    msg ""
+    msg "Для настройки Google Drive нужно авторизоваться."
+    msg "Есть два способа:"
+    msg ""
+    msg "1. Автоматический (если есть браузер на этом сервере)"
+    msg "2. Ручной (если сервер без GUI - нужен браузер на другом ПК)"
+    msg ""
+    
+    echo ""
+    echo "Выберите способ авторизации:"
+    echo "1. Автоматический (браузер на сервере)"
+    echo "2. Ручной (браузер на другом ПК)"
+    read -p "Ваш выбор [2]: " auth_choice
+    auth_choice=${auth_choice:-2}
+    
+    if [[ "$auth_choice" == "1" ]]; then
+        # Автоматическая авторизация
+        msg "Запуск настройки rclone..."
+        msg "Следуйте инструкциям в браузере."
+        rclone config create "$RCLONE_REMOTE_NAME" drive
+    else
+        # Ручная авторизация для headless сервера
+        msg ""
+        msg "=== Инструкция для ручной авторизации ==="
+        msg ""
+        msg "1. Скачайте rclone для Windows:"
+        msg "   https://rclone.org/downloads/"
+        msg "   (выберите Windows - AMD64 - 64 Bit)"
+        msg ""
+        msg "2. Распакуйте архив в любую папку"
+        msg ""
+        msg "3. Откройте терминал (PowerShell) из этой папки:"
+        msg "   ПКМ в папке → 'Открыть в Терминале'"
+        msg ""
+        msg "4. Выполните команду:"
+        msg "   .\\\\rclone authorize \"drive\""
+        msg ""
+        msg "5. Авторизуйтесь в браузере (откроется автоматически)"
+        msg "   В браузере появится 'Success!' — это нормально"
+        msg ""
+        msg "6. Вернитесь в терминал PowerShell — там появится токен:"
+        msg "   Paste the following into your remote machine --->"
+        msg "   {\"access_token\":\"...\",\"refresh_token\":\"...\"}"
+        msg "   <---End paste"
+        msg ""
+        msg "7. Скопируйте токен из ТЕРМИНАЛА (строку от { до })"
+        msg ""
+        read -p "Нажмите Enter когда будете готовы ввести токен..."
+        
+        echo ""
+        echo "Вставьте токен (строка вида {\"access_token\":\"...\",\"...\"}):"
+        read -r gdrive_token
+        
+        if [ -z "$gdrive_token" ]; then
+            error "Токен не введён"
+            return 1
+        fi
+        
+        # Создаём remote с токеном
+        msg "Настройка Google Drive с указанным токеном..."
+        
+        # Создаём конфигурацию напрямую
+        local config_dir="${HOME}/.config/rclone"
+        local config_file="$config_dir/rclone.conf"
+        mkdir -p "$config_dir"
+        
+        # Удаляем старую секцию если есть
+        if [ -f "$config_file" ]; then
+            # Создаём временный файл без секции gdrive
+            sed -i "/^\[$RCLONE_REMOTE_NAME\]/,/^\[/{ /^\[/!d; /^\[$RCLONE_REMOTE_NAME\]/d }" "$config_file" 2>/dev/null || true
+        fi
+        
+        # Добавляем новую конфигурацию
+        cat >> "$config_file" << EOF
+
+[$RCLONE_REMOTE_NAME]
+type = drive
+token = $gdrive_token
+EOF
+        
+        msg "Конфигурация создана."
+    fi
+    
+    # Проверяем подключение
+    msg "Проверка подключения к Google Drive..."
+    if rclone lsd "${RCLONE_REMOTE_NAME}:" &>/dev/null; then
+        msg "✅ Google Drive успешно настроен!"
+        
+        # Создаём папку для бэкапов
+        msg "Создание папки для резервных копий: ${GDRIVE_BACKUP_DIR}"
+        rclone mkdir "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}" 2>/dev/null
+        
+        return 0
+    else
+        error "Не удалось подключиться к Google Drive"
+        return 1
+    fi
+}
+
+# Загрузка файла на Google Drive
+upload_to_gdrive() {
+    local local_file="$1"
+    local remote_path="${2:-$GDRIVE_BACKUP_DIR}"
+    
+    if [ ! -f "$local_file" ]; then
+        error "Файл не найден: $local_file"
+        return 1
+    fi
+    
+    if ! is_gdrive_configured; then
+        error "Google Drive не настроен. Сначала выполните настройку."
+        return 1
+    fi
+    
+    local filename=$(basename "$local_file")
+    local file_size=$(du -h "$local_file" | cut -f1)
+    msg "Загрузка на Google Drive: $filename ($file_size)"
+    msg "Путь: ${RCLONE_REMOTE_NAME}:${remote_path}/"
+    
+    # Выполняем загрузку с выводом ошибок
+    local upload_output
+    upload_output=$(rclone copy "$local_file" "${RCLONE_REMOTE_NAME}:${remote_path}/" --progress 2>&1)
+    local upload_status=$?
+    
+    if [ $upload_status -eq 0 ]; then
+        msg "✅ Файл загружен на Google Drive"
+        return 0
+    else
+        error "Ошибка загрузки на Google Drive"
+        echo "$upload_output" >&2
+        return 1
+    fi
+}
+
+# Скачивание файла с Google Drive
+download_from_gdrive() {
+    local remote_file="$1"
+    local local_dir="$2"
+    
+    if ! is_gdrive_configured; then
+        error "Google Drive не настроен."
+        return 1
+    fi
+    
+    msg "Скачивание с Google Drive: $remote_file"
+    
+    if rclone copy "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}/${remote_file}" "$local_dir" --progress; then
+        msg "✅ Файл скачан"
+        return 0
+    else
+        error "Ошибка скачивания с Google Drive"
+        return 1
+    fi
+}
+
+# Список бэкапов на Google Drive
+list_gdrive_backups() {
+    local server_filter="$1"  # Опционально: фильтр по server_id
+    
+    if ! is_gdrive_configured; then
+        error "Google Drive не настроен."
+        return 1
+    fi
+    
+    msg "--- Резервные копии на Google Drive ---"
+    
+    if [ -n "$server_filter" ]; then
+        rclone ls "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}/" 2>/dev/null | grep "backup_${server_filter}_" | sort -t_ -k3 -r
+    else
+        rclone ls "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}/" 2>/dev/null | grep "backup_" | sort -t_ -k3 -r
+    fi
+}
+
+# Ротация бэкапов на Google Drive
+rotate_gdrive_backups() {
+    msg "Проверка ротации бэкапов на Google Drive (Макс: $MAX_BACKUPS_PER_SERVER на сервер)..."
+    
+    if ! is_gdrive_configured; then
+        return 0
+    fi
+    
+    # Получаем список файлов
+    local all_backups=$(rclone lsf "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}/" 2>/dev/null | grep "^backup_.*\.zip$\|^backup_.*\.tar\.gz$")
+    
+    if [ -z "$all_backups" ]; then
+        msg "Бэкапы на Google Drive не найдены."
+        return 0
+    fi
+    
+    # Извлекаем уникальные server_id
+    local server_ids=$(echo "$all_backups" | sed -E 's/^backup_(.*)_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.(zip|tar\.gz)$/\1/' | sort -u)
+    
+    local total_deleted=0
+    
+    for server_id in $server_ids; do
+        # Бэкапы этого сервера, отсортированные по имени (новые первые)
+        local server_backups=$(echo "$all_backups" | grep "^backup_${server_id}_" | sort -r)
+        local backup_count=$(echo "$server_backups" | grep -c .)
+        
+        if [ "$backup_count" -gt "$MAX_BACKUPS_PER_SERVER" ]; then
+            # Удаляем старые
+            local backups_to_delete=$(echo "$server_backups" | tail -n +$((MAX_BACKUPS_PER_SERVER + 1)))
+            
+            while IFS= read -r backup; do
+                if [ -n "$backup" ]; then
+                    if rclone delete "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}/${backup}" 2>/dev/null; then
+                        msg "Удалён с Google Drive: $backup"
+                        ((total_deleted++))
+                    fi
+                fi
+            done <<< "$backups_to_delete"
+        fi
+    done
+    
+    if [ "$total_deleted" -eq 0 ]; then
+        msg "Ротация на Google Drive не требуется."
+    else
+        msg "Удалено с Google Drive: $total_deleted бэкапов"
+    fi
+}
+
+# Удаление бэкапа с Google Drive
+delete_gdrive_backup() {
+    local filename="$1"
+    
+    if ! is_gdrive_configured; then
+        error "Google Drive не настроен."
+        return 1
+    fi
+    
+    if rclone delete "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}/${filename}" 2>/dev/null; then
+        msg "✅ Удалён с Google Drive: $filename"
+        return 0
+    else
+        error "Не удалось удалить: $filename"
+        return 1
     fi
 }
 
@@ -4282,6 +4581,60 @@ setup_auto_backup() {
         fi
     fi
 
+    # Выбор хранилища
+    echo ""
+    local gdrive_status="❌ не настроен"
+    if is_gdrive_configured; then
+        gdrive_status="✅ настроен"
+    fi
+    
+    echo "Выберите хранилище для авто-бэкапов:"
+    echo "1. Локальный сервер ($BACKUP_DIR)"
+    echo "2. Оба (локальный + Google Диск) ($gdrive_status)"
+    echo "---"
+    echo "9. Настроить Google Диск"
+    echo "0. Отмена"
+    
+    local storage_choice
+    read -p "Ваш выбор [1]: " storage_choice
+    storage_choice=${storage_choice:-1}
+    
+    local storage_param="local"
+    local storage_display="Локальный ($BACKUP_DIR)"
+    
+    case $storage_choice in
+        1) storage_param="local"; storage_display="Локальный ($BACKUP_DIR)" ;;
+        2)
+            if ! is_gdrive_configured; then
+                warning "Google Drive не настроен!"
+                read -p "Настроить сейчас? (yes/no): " setup_now
+                if [[ "$setup_now" == "yes" ]]; then
+                    if ! setup_gdrive_rclone; then
+                        msg "Будет использовано только локальное хранилище"
+                        storage_param="local"
+                        storage_display="Локальный ($BACKUP_DIR)"
+                    else
+                        storage_param="both"
+                        storage_display="Локальный + Google Диск"
+                    fi
+                else
+                    storage_param="local"
+                    storage_display="Локальный ($BACKUP_DIR)"
+                fi
+            else
+                storage_param="both"
+                storage_display="Локальный + Google Диск"
+            fi
+            ;;
+        9) 
+            setup_gdrive_rclone
+            return 0
+            ;;
+        0) return 0 ;;
+        *) storage_param="local"; storage_display="Локальный ($BACKUP_DIR)" ;;
+    esac
+
+    echo ""
     echo "Выберите частоту бэкапов:"
     echo "1. Ежедневно в 04:00"
     echo "2. Каждые 12 часов (04:00 и 16:00)"
@@ -4303,7 +4656,7 @@ setup_auto_backup() {
     # Формируем новую задачу с использованием curl
     # Новые записи добавляются в начало лога (свежее сверху)
     local log_file="/var/log/minecraft_backup.log"
-    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
+    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup $storage_param > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
 
     # Удаляем старую задачу (если была) и добавляем новую
     local temp_cron=$(mktemp)
@@ -4313,7 +4666,7 @@ setup_auto_backup() {
     if sudo crontab "$temp_cron"; then
         msg "✅ Автобэкап для ВСЕХ серверов успешно настроен!"
         msg "   Расписание: $cron_schedule"
-        msg "   Хранилище: $BACKUP_DIR"
+        msg "   Хранилище: $storage_display"
         msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
         msg "   Логи: $log_file"
     else
@@ -4348,6 +4701,60 @@ setup_auto_backup_server() {
         fi
     fi
 
+    # Выбор хранилища
+    echo ""
+    local gdrive_status="❌ не настроен"
+    if is_gdrive_configured; then
+        gdrive_status="✅ настроен"
+    fi
+    
+    echo "Выберите хранилище для авто-бэкапов:"
+    echo "1. Локальный сервер ($BACKUP_DIR)"
+    echo "2. Оба (локальный + Google Диск) ($gdrive_status)"
+    echo "---"
+    echo "9. Настроить Google Диск"
+    echo "0. Отмена"
+    
+    local storage_choice
+    read -p "Ваш выбор [1]: " storage_choice
+    storage_choice=${storage_choice:-1}
+    
+    local storage_param="local"
+    local storage_display="Локальный ($BACKUP_DIR)"
+    
+    case $storage_choice in
+        1) storage_param="local"; storage_display="Локальный ($BACKUP_DIR)" ;;
+        2)
+            if ! is_gdrive_configured; then
+                warning "Google Drive не настроен!"
+                read -p "Настроить сейчас? (yes/no): " setup_now
+                if [[ "$setup_now" == "yes" ]]; then
+                    if ! setup_gdrive_rclone; then
+                        msg "Будет использовано только локальное хранилище"
+                        storage_param="local"
+                        storage_display="Локальный ($BACKUP_DIR)"
+                    else
+                        storage_param="both"
+                        storage_display="Локальный + Google Диск"
+                    fi
+                else
+                    storage_param="local"
+                    storage_display="Локальный ($BACKUP_DIR)"
+                fi
+            else
+                storage_param="both"
+                storage_display="Локальный + Google Диск"
+            fi
+            ;;
+        9) 
+            setup_gdrive_rclone
+            return 0
+            ;;
+        0) return 0 ;;
+        *) storage_param="local"; storage_display="Локальный ($BACKUP_DIR)" ;;
+    esac
+
+    echo ""
     echo "Выберите частоту бэкапов:"
     echo "1. Ежедневно в 04:00"
     echo "2. Каждые 12 часов (04:00 и 16:00)"
@@ -4369,7 +4776,7 @@ setup_auto_backup_server() {
     # Формируем новую задачу с использованием curl
     # Новые записи добавляются в начало лога (свежее сверху)
     local log_file="/var/log/minecraft_backup_${ACTIVE_SERVER_ID}.log"
-    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup-server $ACTIVE_SERVER_ID > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
+    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --auto-backup-server $ACTIVE_SERVER_ID $storage_param > \$tmp 2>&1; { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; rm -f \$tmp # $cron_marker"
 
     # Удаляем старую задачу (если была) и добавляем новую
     local temp_cron=$(mktemp)
@@ -4379,7 +4786,7 @@ setup_auto_backup_server() {
     if sudo crontab "$temp_cron"; then
         msg "✅ Авто-бэкап для '$ACTIVE_SERVER_ID' успешно настроен!"
         msg "   Расписание: $cron_schedule"
-        msg "   Хранилище: $BACKUP_DIR"
+        msg "   Хранилище: $storage_display"
         msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
         msg "   Логи: $log_file"
     else
@@ -4570,6 +4977,7 @@ EOF
 install_backup_timer() {
     local server_id="$1"
     local interval_minutes="${2:-10}"  # По умолчанию 10 минут
+    local storage_type="${3:-local}"   # local, gdrive, both
     
     if [ -z "$server_id" ]; then
         error "ID сервера не указан"
@@ -4585,16 +4993,16 @@ install_backup_timer() {
     
     msg "Создание systemd timer для резервной проверки..."
     
-    # Создаём service файл
+    # Создаём service файл с параметром хранилища
     sudo tee "$service_file" > /dev/null << EOF
 [Unit]
-Description=Backup Check Service for server ${server_id} (fallback)
+Description=Backup Check Service for server ${server_id}
 After=network.target
 
 [Service]
 Type=oneshot
 User=root
-ExecStart=/bin/bash -c 'curl -Ls ${script_url} | bash -s -- --check-empty-backup ${server_id}'
+ExecStart=/bin/bash -c 'curl -Ls ${script_url} | bash -s -- --check-empty-backup ${server_id} ${storage_type}'
 StandardOutput=journal
 StandardError=journal
 EOF
@@ -4620,7 +5028,7 @@ WantedBy=timers.target
 EOF
 
     sudo systemctl daemon-reload
-    msg "✅ Timer создан: $timer_name (интервал: ${interval_minutes} минут)"
+    msg "✅ Timer создан: $timer_name (интервал: ${interval_minutes} минут, хранилище: $storage_type)"
 }
 
 # Удаление systemd service и timer для авто-бэкапа
@@ -4731,6 +5139,59 @@ setup_auto_backup_on_empty() {
         remove_old_cron_backup_on_empty "$ACTIVE_SERVER_ID"
     fi
 
+    # Выбор хранилища
+    echo ""
+    local gdrive_status="❌ не настроен"
+    if is_gdrive_configured; then
+        gdrive_status="✅ настроен"
+    fi
+    
+    echo "Выберите хранилище для авто-бэкапов:"
+    echo "1. Локальный сервер ($BACKUP_DIR)"
+    echo "2. Оба (локальный + Google Диск) ($gdrive_status)"
+    echo "---"
+    echo "9. Настроить Google Диск"
+    echo "0. Отмена"
+    
+    local storage_choice
+    read -p "Ваш выбор [1]: " storage_choice
+    storage_choice=${storage_choice:-1}
+    
+    local storage_param="local"
+    local storage_display="Локальный ($BACKUP_DIR)"
+    
+    case $storage_choice in
+        1) storage_param="local"; storage_display="Локальный ($BACKUP_DIR)" ;;
+        2)
+            if ! is_gdrive_configured; then
+                warning "Google Drive не настроен!"
+                read -p "Настроить сейчас? (yes/no): " setup_now
+                if [[ "$setup_now" == "yes" ]]; then
+                    if ! setup_gdrive_rclone; then
+                        msg "Будет использовано только локальное хранилище"
+                        storage_param="local"
+                        storage_display="Локальный ($BACKUP_DIR)"
+                    else
+                        storage_param="both"
+                        storage_display="Локальный + Google Диск"
+                    fi
+                else
+                    storage_param="local"
+                    storage_display="Локальный ($BACKUP_DIR)"
+                fi
+            else
+                storage_param="both"
+                storage_display="Локальный + Google Диск"
+            fi
+            ;;
+        9) 
+            setup_gdrive_rclone
+            return 0
+            ;;
+        0) return 0 ;;
+        *) storage_param="local"; storage_display="Локальный ($BACKUP_DIR)" ;;
+    esac
+
     echo ""
     echo "Выберите интервал проверки:"
     echo "1. Каждую минуту (быстрая реакция)"
@@ -4749,8 +5210,8 @@ setup_auto_backup_on_empty() {
         *) msg "Неверный выбор, используется 2 минуты."; timer_interval="2" ;;
     esac
 
-    # Устанавливаем только Timer
-    if ! install_backup_timer "$ACTIVE_SERVER_ID" "$timer_interval"; then
+    # Устанавливаем только Timer с параметром хранилища
+    if ! install_backup_timer "$ACTIVE_SERVER_ID" "$timer_interval" "$storage_param"; then
         error "Не удалось установить timer"
         return 1
     fi
@@ -4767,7 +5228,7 @@ setup_auto_backup_on_empty() {
     msg ""
     msg "✅ Авто-бэкап при выходе последнего игрока настроен!"
     msg "   Интервал проверки: каждые ${timer_interval} мин."
-    msg "   Хранилище: $BACKUP_DIR"
+    msg "   Хранилище: $storage_display"
     msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
     msg "   Логи: journalctl -u ${timer_service_name}"
     msg ""
@@ -4944,9 +5405,10 @@ troubleshoot_server() {
 # --- Обработка аргументов командной строки (для автобэкапа) ---
 handle_command_args() {
     if [ "$1" == "--auto-backup" ]; then
-        # ... (существующий код --auto-backup) ...
+        local storage_type="${2:-local}"  # local, gdrive, both
         # Используем echo для вывода в лог cron
         echo "--- Запуск автоматического резервного копирования $(date) ---"
+        echo "Хранилище: $storage_type"
         
         # Ротация лога если нужно
         rotate_log_if_needed "/var/log/minecraft_backup.log"
@@ -4980,8 +5442,34 @@ handle_command_args() {
              echo "--- Бэкап сервера '$name' (ID: $id) ---"
              # Делаем активным для create_backup (используем load_server_config)
              if load_server_config "$id"; then
-                 # Вызываем create_backup (она использует глобальные переменные активного сервера)
-                 if create_backup; then
+                 local backup_ok=false
+                 
+                 case "$storage_type" in
+                     "local")
+                         if create_backup; then backup_ok=true; fi
+                         ;;
+                     "gdrive")
+                         if is_gdrive_configured; then
+                             if create_backup_to_gdrive; then backup_ok=true; fi
+                         else
+                             echo "Google Drive не настроен, пропуск сервера $id" >&2
+                         fi
+                         ;;
+                     "both")
+                         if create_backup; then backup_ok=true; fi
+                         if is_gdrive_configured; then
+                             local latest=$(ls -t "$BACKUP_DIR"/backup_${id}_*.zip "$BACKUP_DIR"/backup_${id}_*.tar.gz 2>/dev/null | head -1)
+                             if [ -n "$latest" ] && [ -f "$latest" ]; then
+                                 upload_to_gdrive "$latest" && echo "✅ Загружено на Google Drive"
+                             fi
+                         fi
+                         ;;
+                     *)
+                         if create_backup; then backup_ok=true; fi
+                         ;;
+                 esac
+                 
+                 if $backup_ok; then
                       ((success_count++))
                  else
                       echo "Ошибка при создании бэкапа для '$name' (ID: $id)." >&2
@@ -4994,6 +5482,11 @@ handle_command_args() {
         done < "$SERVERS_CONFIG_FILE" # Читаем напрямую из файла
 
         echo "Автобэкап завершен. Успешно: $success_count, Ошибки: $fail_count."
+        
+        # Ротация бэкапов на Google Drive
+        if [[ "$storage_type" == "gdrive" || "$storage_type" == "both" ]] && is_gdrive_configured; then
+            rotate_gdrive_backups
+        fi
 
         # Восстанавливаем исходный активный сервер, если он был и все еще существует
         if [ -n "$original_active_id" ]; then
@@ -5022,7 +5515,9 @@ handle_command_args() {
         exit 0
     elif [ "$1" == "--auto-backup-server" ]; then
         local target_server_id="$2"
+        local storage_type="${3:-local}"  # local, gdrive, both
         echo "--- Запуск автоматического резервного копирования $(date) ---"
+        echo "Хранилище: $storage_type"
         
         # Ротация лога если нужно
         local log_file="/var/log/minecraft_backup_${target_server_id}.log"
@@ -5035,7 +5530,51 @@ handle_command_args() {
         # Загружаем конфиг сервера
         if load_server_config "$target_server_id"; then
             echo "Создание бэкапа для сервера '$target_server_id'..."
-            if create_backup; then
+            
+            local backup_success=false
+            
+            case "$storage_type" in
+                "local")
+                    if create_backup; then
+                        backup_success=true
+                    fi
+                    ;;
+                "gdrive")
+                    if is_gdrive_configured; then
+                        if create_backup_to_gdrive; then
+                            backup_success=true
+                        fi
+                    else
+                        echo "Ошибка: Google Drive не настроен." >&2
+                    fi
+                    ;;
+                "both")
+                    # Сначала локальный бэкап
+                    if create_backup; then
+                        backup_success=true
+                    fi
+                    # Затем загрузка на Google Drive
+                    if is_gdrive_configured; then
+                        local latest_backup=$(ls -t "$BACKUP_DIR"/backup_${target_server_id}_*.zip "$BACKUP_DIR"/backup_${target_server_id}_*.tar.gz 2>/dev/null | head -1)
+                        if [ -n "$latest_backup" ] && [ -f "$latest_backup" ]; then
+                            if upload_to_gdrive "$latest_backup"; then
+                                echo "✅ Бэкап загружен на Google Drive"
+                                rotate_gdrive_backups
+                            fi
+                        fi
+                    else
+                        echo "Предупреждение: Google Drive не настроен, бэкап только локальный." >&2
+                    fi
+                    ;;
+                *)
+                    # По умолчанию локальный
+                    if create_backup; then
+                        backup_success=true
+                    fi
+                    ;;
+            esac
+            
+            if $backup_success; then
                 echo "✅ Бэкап для '$target_server_id' успешно создан."
                 exit 0
             else
@@ -5048,6 +5587,7 @@ handle_command_args() {
     elif [ "$1" == "--check-empty-backup" ]; then
         # Проверка игроков и бэкап при выходе последнего
         local target_server_id="$2"
+        local storage_type="${3:-local}"  # local, gdrive, both
         
         if [ -z "$target_server_id" ]; then
             exit 1
@@ -5082,19 +5622,47 @@ handle_command_args() {
             echo "--- Авто-бэкап: последний игрок вышел $(date) ---"
             echo "Сервер: $target_server_id"
             echo "Игроков было: $prev_count, сейчас: $current_count"
+            echo "Хранилище: $storage_type"
             echo "Создание резервной копии..."
             
             # Ротация лога
             local log_file="/var/log/minecraft_emptybackup_${target_server_id}.log"
             rotate_log_if_needed "$log_file"
             
-            if create_backup; then
+            local backup_ok=false
+            case "$storage_type" in
+                "local")
+                    if create_backup; then backup_ok=true; fi
+                    ;;
+                "gdrive")
+                    if is_gdrive_configured; then
+                        if create_backup_to_gdrive; then backup_ok=true; fi
+                    else
+                        echo "Google Drive не настроен!" >&2
+                    fi
+                    ;;
+                "both")
+                    if create_backup; then backup_ok=true; fi
+                    if is_gdrive_configured; then
+                        local latest=$(ls -t "$BACKUP_DIR"/backup_${target_server_id}_*.zip "$BACKUP_DIR"/backup_${target_server_id}_*.tar.gz 2>/dev/null | head -1)
+                        if [ -n "$latest" ] && [ -f "$latest" ]; then
+                            upload_to_gdrive "$latest" && echo "✅ Загружено на Google Drive"
+                            rotate_gdrive_backups
+                        fi
+                    fi
+                    ;;
+                *)
+                    if create_backup; then backup_ok=true; fi
+                    ;;
+            esac
+            
+            if $backup_ok; then
                 echo "✅ Бэкап успешно создан!"
             else
                 echo "❌ Ошибка при создании бэкапа." >&2
             fi
         fi
-        # Если ничего не выводим, лог не обновляется (см. условие if [ -s $tmp ] в cron)
+        # Если ничего не выводим, лог не обновляется
         exit 0
     fi
     # Здесь можно добавить обработку других аргументов в будущем
@@ -5103,28 +5671,386 @@ handle_command_args() {
 }
 
 # Объединенное меню резервного копирования
+# Выбор хранилища для резервных копий
+# Возвращает: 1 = локальный, 2 = Google Drive, 3 = оба
+select_backup_storage() {
+    local gdrive_status="❌ не настроен"
+    if is_gdrive_configured; then
+        gdrive_status="✅ настроен"
+    fi
+    
+    echo ""
+    echo "Выберите хранилище:"
+    echo "1. Локальный сервер ($BACKUP_DIR)"
+    echo "2. Оба (локальный + Google Диск) ($gdrive_status)"
+    echo "---"
+    echo "9. Настроить Google Диск"
+    echo "0. Отмена"
+    
+    local storage_choice
+    read -p "Ваш выбор [1]: " storage_choice
+    storage_choice=${storage_choice:-1}
+    
+    case $storage_choice in
+        1) echo "local"; return 0 ;;
+        2)
+            if ! is_gdrive_configured; then
+                warning "Google Drive не настроен! Будет использовано только локальное хранилище."
+                read -p "Настроить Google Drive сейчас? (yes/no): " setup_now
+                if [[ "$setup_now" == "yes" ]]; then
+                    if setup_gdrive_rclone; then
+                        echo "both"; return 0
+                    fi
+                fi
+                echo "local"; return 0
+            fi
+            echo "both"; return 0 
+            ;;
+        9) 
+            setup_gdrive_rclone
+            return 1  # Возврат в меню после настройки
+            ;;
+        0) return 1 ;;
+        *) echo "local"; return 0 ;;
+    esac
+}
+
+# Создать бэкап с выбором хранилища
+create_backup_with_storage() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then 
+        error "Активный сервер не выбран."
+        return 1
+    fi
+    
+    local storage
+    storage=$(select_backup_storage)
+    local ret=$?
+    
+    if [ $ret -ne 0 ]; then
+        msg "Выбор хранилища отменён"
+        return 1
+    fi
+    
+    msg "Выбрано хранилище: $storage"
+    
+    case $storage in
+        "local")
+            msg "Создание локального бэкапа..."
+            create_backup
+            ;;
+        "both")
+            msg "Создание бэкапа на оба хранилища..."
+            create_backup_to_both
+            ;;
+        *)
+            error "Неизвестный тип хранилища: $storage"
+            return 1
+            ;;
+    esac
+}
+
+# Создать бэкап только на Google Drive
+create_backup_to_gdrive() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then 
+        error "Активный сервер не выбран."; 
+        return 1
+    fi
+    
+    msg "--- Создание резервной копии на Google Drive (ID: $ACTIVE_SERVER_ID) ---"
+    
+    if ! is_gdrive_configured; then 
+        error "Google Drive не настроен."; 
+        return 1
+    fi
+    
+    msg "✅ Google Drive настроен, продолжаем..."
+    
+    # Сначала создаём локальный бэкап во временной директории
+    local temp_backup_dir="/tmp/minecraft_backup_$$"
+    local backup_name="backup_${ACTIVE_SERVER_ID}_$(date +%Y-%m-%d_%H-%M-%S).zip"
+    local temp_backup_file="${temp_backup_dir}/${backup_name}"
+    
+    msg "Временная директория: $temp_backup_dir"
+    msg "Имя бэкапа: $backup_name"
+    
+    if ! mkdir -p "$temp_backup_dir"; then
+        error "Не удалось создать временную директорию"
+        return 1
+    fi
+    
+    # Копируем файлы
+    msg "Копирование файлов сервера..."
+    local source_dir="$DEFAULT_INSTALL_DIR"
+    
+    if $BACKUP_WORLDS_ONLY && [ -d "$source_dir/worlds" ]; then
+        source_dir="$DEFAULT_INSTALL_DIR/worlds"
+        msg "Режим: только миры"
+    else
+        msg "Режим: полный бэкап"
+    fi
+    
+    local temp_copy_dir="${temp_backup_dir}/backup_data"
+    mkdir -p "$temp_copy_dir"
+    
+    if ! sudo rsync -a "$source_dir/" "$temp_copy_dir/"; then
+        error "Ошибка копирования файлов"
+        rm -rf "$temp_backup_dir"
+        return 1
+    fi
+    
+    # Архивируем
+    msg "Создание архива..."
+    if command -v zip &>/dev/null; then
+        (cd "$temp_backup_dir" && zip -r "$backup_name" "backup_data" -q)
+    else
+        (cd "$temp_backup_dir" && tar -czf "${backup_name%.zip}.tar.gz" "backup_data")
+        backup_name="${backup_name%.zip}.tar.gz"
+        temp_backup_file="${temp_backup_dir}/${backup_name}"
+    fi
+    
+    if [ ! -f "$temp_backup_file" ]; then
+        error "Не удалось создать архив"
+        rm -rf "$temp_backup_dir"
+        return 1
+    fi
+    
+    # Проверяем, что файл создан
+    if [ ! -f "$temp_backup_file" ]; then
+        error "Архив не найден: $temp_backup_file"
+        rm -rf "$temp_backup_dir"
+        return 1
+    fi
+    
+    local file_size=$(du -h "$temp_backup_file" | cut -f1)
+    msg "Архив создан: $backup_name ($file_size)"
+    
+    # Загружаем на Google Drive
+    msg "Начинаем загрузку на Google Drive..."
+    if upload_to_gdrive "$temp_backup_file"; then
+        msg "✅ Бэкап загружен на Google Drive: $backup_name"
+        # Ротация на Google Drive
+        msg "Выполняем ротацию бэкапов на Google Drive..."
+        rotate_gdrive_backups
+    else
+        error "Ошибка загрузки на Google Drive"
+        error "Файл остался во временной директории: $temp_backup_file"
+        rm -rf "$temp_backup_dir"
+        return 1
+    fi
+    
+    # Удаляем временные файлы
+    msg "Удаление временных файлов..."
+    rm -rf "$temp_backup_dir"
+    
+    msg "✅ Создание резервной копии на Google Drive завершено."
+    return 0
+}
+
+# Создать бэкап на оба хранилища
+create_backup_to_both() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+    
+    msg "--- Создание резервной копии на оба хранилища ---"
+    
+    # Сначала локальный бэкап
+    msg "=== Локальный бэкап ==="
+    if ! create_backup; then
+        warning "Локальный бэкап не создан"
+        return 1
+    fi
+    
+    # Находим последний созданный бэкап и загружаем на Google Drive
+    if is_gdrive_configured; then
+        msg ""
+        msg "=== Загрузка на Google Drive ==="
+        
+        # Небольшая задержка, чтобы файл точно был записан на диск
+        sleep 1
+        
+        # Используем несколько методов поиска для надёжности
+        local latest_backup=""
+        
+        # Метод 1: find с -printf (GNU find)
+        latest_backup=$(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "backup_${ACTIVE_SERVER_ID}_*.zip" -o -name "backup_${ACTIVE_SERVER_ID}_*.tar.gz" \) -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+        
+        # Метод 2: find с stat (универсальный)
+        if [ -z "$latest_backup" ] || [ ! -f "$latest_backup" ]; then
+            latest_backup=$(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "backup_${ACTIVE_SERVER_ID}_*.zip" -o -name "backup_${ACTIVE_SERVER_ID}_*.tar.gz" \) -exec stat -c '%Y %n' {} \; 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+        fi
+        
+        # Метод 3: ls (fallback)
+        if [ -z "$latest_backup" ] || [ ! -f "$latest_backup" ]; then
+            latest_backup=$(ls -t "$BACKUP_DIR"/backup_${ACTIVE_SERVER_ID}_*.zip "$BACKUP_DIR"/backup_${ACTIVE_SERVER_ID}_*.tar.gz 2>/dev/null | head -1)
+        fi
+        
+        if [ -n "$latest_backup" ] && [ -f "$latest_backup" ]; then
+            msg "Найден бэкап для загрузки: $(basename "$latest_backup")"
+            msg "Полный путь: $latest_backup"
+            if upload_to_gdrive "$latest_backup"; then
+                msg "✅ Бэкап загружен на Google Drive"
+                rotate_gdrive_backups
+            else
+                error "Не удалось загрузить бэкап на Google Drive"
+                return 1
+            fi
+        else
+            error "Не найден локальный бэкап для загрузки на Google Drive"
+            msg "Проверка директории: $BACKUP_DIR"
+            msg "Ищем файлы: backup_${ACTIVE_SERVER_ID}_*"
+            ls -lah "$BACKUP_DIR"/backup_${ACTIVE_SERVER_ID}_* 2>/dev/null || msg "Файлы не найдены"
+            return 1
+        fi
+    fi
+    
+    msg "Создание резервной копии завершено."
+}
+
+# Восстановить из Google Drive
+restore_from_gdrive() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
+    if ! is_gdrive_configured; then error "Google Drive не настроен."; return 1; fi
+    
+    msg "--- Восстановление из Google Drive ---"
+    
+    # Получаем список бэкапов
+    local backups=$(rclone lsf "${RCLONE_REMOTE_NAME}:${GDRIVE_BACKUP_DIR}/" 2>/dev/null | grep "backup_${ACTIVE_SERVER_ID}_" | sort -r)
+    
+    if [ -z "$backups" ]; then
+        error "Бэкапы для сервера '$ACTIVE_SERVER_ID' не найдены на Google Drive"
+        return 1
+    fi
+    
+    echo ""
+    echo "Доступные бэкапы на Google Drive:"
+    local i=1
+    local backup_array=()
+    while IFS= read -r backup; do
+        echo "$i. $backup"
+        backup_array+=("$backup")
+        ((i++))
+    done <<< "$backups"
+    
+    echo "0. Отмена"
+    read -p "Выберите бэкап для восстановления: " choice
+    
+    if [ "$choice" == "0" ] || [ -z "$choice" ]; then
+        return 0
+    fi
+    
+    local selected_backup="${backup_array[$((choice-1))]}"
+    if [ -z "$selected_backup" ]; then
+        error "Неверный выбор"
+        return 1
+    fi
+    
+    msg "Скачивание: $selected_backup"
+    
+    local temp_dir="/tmp/minecraft_restore_$$"
+    mkdir -p "$temp_dir"
+    
+    if ! download_from_gdrive "$selected_backup" "$temp_dir"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Остановка сервера
+    msg "Остановка сервера..."
+    stop_server
+    sleep 2
+    
+    # Распаковка
+    msg "Распаковка бэкапа..."
+    local backup_file="$temp_dir/$selected_backup"
+    
+    if [[ "$selected_backup" == *.zip ]]; then
+        unzip -o "$backup_file" -d "$temp_dir"
+    else
+        tar -xzf "$backup_file" -C "$temp_dir"
+    fi
+    
+    # Восстановление
+    local backup_data_dir="$temp_dir/backup_data"
+    if [ -d "$backup_data_dir" ]; then
+        msg "Восстановление файлов..."
+        sudo rsync -a --delete "$backup_data_dir/" "$DEFAULT_INSTALL_DIR/"
+        sudo chown -R "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR"
+    else
+        error "Структура бэкапа повреждена"
+        rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    rm -rf "$temp_dir"
+    
+    msg "✅ Сервер восстановлен из Google Drive!"
+    read -p "Запустить сервер? (yes/no): " start_now
+    if [[ "$start_now" == "yes" ]]; then
+        start_server
+    fi
+}
+
+# Восстановление с выбором источника
+restore_backup_with_storage() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then 
+        error "Активный сервер не выбран."
+        return 1
+    fi
+    
+    echo ""
+    echo "Восстановить из:"
+    echo "1. Локального сервера"
+    
+    if is_gdrive_configured; then
+        echo "2. Google Диска"
+    else
+        echo "2. Google Диска (не настроен)"
+    fi
+    echo "0. Отмена"
+    
+    local choice
+    read -p "Ваш выбор [1]: " choice
+    choice=${choice:-1}
+    
+    case $choice in
+        1) restore_backup ;;
+        2) 
+            if is_gdrive_configured; then
+                restore_from_gdrive
+            else
+                error "Google Drive не настроен"
+            fi
+            ;;
+        0) return 0 ;;
+    esac
+}
+
 full_backup_menu() {
     while true; do
+        local gdrive_status="❌"
+        if is_gdrive_configured; then
+            gdrive_status="✅"
+        fi
+        
         echo ""; echo "--- Управление Резервными Копиями ---"
-        echo "Хранилище: $BACKUP_DIR (макс. $MAX_BACKUPS_PER_SERVER копий на сервер)"
+        echo "Локальное: $BACKUP_DIR | Google Drive: $gdrive_status"
+        echo "Макс. копий на сервер: $MAX_BACKUPS_PER_SERVER"
         echo "-----------------------------------"
         echo "1. Создать копию активного сервера (ID: ${ACTIVE_SERVER_ID:-не выбран})"
         echo "2. Восстановить активный сервер из копии"
         echo "-----------------------------------"
         echo "3. Авто-бэкап для активного сервера"
         echo "4. Авто-бэкап для ВСЕХ серверов (по расписанию)"
-        echo "5. Очистить лишние бэкапы (ротация до $MAX_BACKUPS_PER_SERVER копий на сервер)"
+        echo "5. Очистить лишние бэкапы (ротация)"
+        echo "-----------------------------------"
+        echo "6. Настроить Google Диск"
+        echo "7. Список бэкапов на Google Диске"
         echo "-----------------------------------"
         echo "0. Назад в главное меню"
         
         local backup_choice; read -p "Выберите опцию: " backup_choice
         case $backup_choice in
-            1) 
-                if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; else create_backup; fi 
-                ;;
-            2) 
-                if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; else restore_backup; fi 
-                ;;
+            1) create_backup_with_storage ;;
+            2) restore_backup_with_storage ;;
             3) 
                 if [ -z "$ACTIVE_SERVER_ID" ]; then 
                     error "Активный сервер не выбран."
@@ -5150,6 +6076,17 @@ full_backup_menu() {
             5) 
                 msg "Выполняется ротация бэкапов..."
                 rotate_backups
+                if is_gdrive_configured; then
+                    rotate_gdrive_backups
+                fi
+                ;;
+            6) setup_gdrive_rclone ;;
+            7) 
+                if is_gdrive_configured; then
+                    list_gdrive_backups
+                else
+                    error "Google Drive не настроен"
+                fi
                 ;;
             0) return 0 ;;
             *) msg "Неверно.";;
