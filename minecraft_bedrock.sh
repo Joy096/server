@@ -1458,13 +1458,13 @@ restore_backup() {
     local extracted_subdir_name=""
     local archive_cmd_success=false
     if [[ "$backup_name" == *.zip ]]; then
-        if sudo unzip -q "$selected_backup" -d "$temp_dir"; then archive_cmd_success=true; fi
+        if sudo unzip -q -o "$selected_backup" -d "$temp_dir" > /dev/null 2>&1; then archive_cmd_success=true; fi
         # Пытаемся определить имя папки внутри zip
-        extracted_subdir_name=$(unzip -l "$selected_backup" | grep -oE '^ *[0-9]+ +[0-9:]{5} +[^/]+/$' | head -n 1 | awk '{print $NF}' | sed 's|/$||')
+        extracted_subdir_name=$(unzip -l "$selected_backup" 2>/dev/null | grep -oE '^ *[0-9]+ +[0-9:]{5} +[^/]+/$' | head -n 1 | awk '{print $NF}' | sed 's|/$||')
     elif [[ "$backup_name" == *.tar.gz ]]; then
-        if sudo tar -xzf "$selected_backup" -C "$temp_dir"; then archive_cmd_success=true; fi
+        if sudo tar -xzf "$selected_backup" -C "$temp_dir" > /dev/null 2>&1; then archive_cmd_success=true; fi
         # Пытаемся определить имя папки внутри tar.gz
-        extracted_subdir_name=$(tar -tzf "$selected_backup" | grep '/$' | head -n 1 | sed 's|/$||')
+        extracted_subdir_name=$(tar -tzf "$selected_backup" 2>/dev/null | grep '/$' | head -n 1 | sed 's|/$||')
     else
         error "Неизвестный формат архива: $backup_name"; sudo rm -rf "$temp_dir"; return 1;
     fi
@@ -5995,19 +5995,41 @@ restore_from_gdrive() {
     local backup_file="$temp_dir/$selected_backup"
     
     if [[ "$selected_backup" == *.zip ]]; then
-        unzip -o "$backup_file" -d "$temp_dir"
+        if ! unzip -q -o "$backup_file" -d "$temp_dir" > /dev/null 2>&1; then
+            error "Ошибка при распаковке архива"
+            rm -rf "$temp_dir"
+            return 1
+        fi
     else
-        tar -xzf "$backup_file" -C "$temp_dir"
+        if ! tar -xzf "$backup_file" -C "$temp_dir" > /dev/null 2>&1; then
+            error "Ошибка при распаковке архива"
+            rm -rf "$temp_dir"
+            return 1
+        fi
     fi
     
-    # Восстановление
-    local backup_data_dir="$temp_dir/backup_data"
-    if [ -d "$backup_data_dir" ]; then
-        msg "Восстановление файлов..."
+    # Восстановление - проверяем несколько вариантов структуры
+    local backup_data_dir=""
+    
+    # Вариант 1: backup_data (новый формат)
+    if [ -d "$temp_dir/backup_data" ]; then
+        backup_data_dir="$temp_dir/backup_data"
+    # Вариант 2: имя папки бэкапа (старый формат)
+    elif [ -d "$temp_dir/backup_${ACTIVE_SERVER_ID}_"* ]; then
+        backup_data_dir=$(ls -d "$temp_dir/backup_${ACTIVE_SERVER_ID}_"* 2>/dev/null | head -1)
+    # Вариант 3: содержимое напрямую в temp_dir
+    elif [ -f "$temp_dir/server.properties" ] || [ -d "$temp_dir/worlds" ]; then
+        backup_data_dir="$temp_dir"
+    fi
+    
+    if [ -n "$backup_data_dir" ] && [ -d "$backup_data_dir" ]; then
+        msg "Восстановление файлов из: $backup_data_dir"
         sudo rsync -a --delete "$backup_data_dir/" "$DEFAULT_INSTALL_DIR/"
         sudo chown -R "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR"
     else
-        error "Структура бэкапа повреждена"
+        error "Структура бэкапа повреждена или не распознана"
+        msg "Содержимое временной директории:"
+        ls -la "$temp_dir" 2>/dev/null | head -20
         rm -rf "$temp_dir"
         return 1
     fi
