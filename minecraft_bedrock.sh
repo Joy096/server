@@ -5589,12 +5589,18 @@ handle_command_args() {
         local target_server_id="$2"
         local storage_type="${3:-local}"  # local, gdrive, both
         
+        echo "--- Проверка авто-бэкапа при выходе игроков ---"
+        echo "Сервер: ${target_server_id:-не указан}"
+        echo "Хранилище: $storage_type"
+        
         if [ -z "$target_server_id" ]; then
+            echo "Ошибка: ID сервера не указан" >&2
             exit 1
         fi
 
         # Загружаем конфиг сервера
         if ! load_server_config "$target_server_id"; then
+            echo "Ошибка: Не удалось загрузить конфиг сервера" >&2
             exit 1
         fi
         
@@ -5644,10 +5650,35 @@ handle_command_args() {
                 "both")
                     if create_backup; then backup_ok=true; fi
                     if is_gdrive_configured; then
-                        local latest=$(ls -t "$BACKUP_DIR"/backup_${target_server_id}_*.zip "$BACKUP_DIR"/backup_${target_server_id}_*.tar.gz 2>/dev/null | head -1)
+                        # Небольшая задержка, чтобы файл точно был записан на диск
+                        sleep 1
+                        
+                        # Используем несколько методов поиска для надёжности
+                        local latest=""
+                        
+                        # Метод 1: find с -printf (GNU find)
+                        latest=$(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "backup_${target_server_id}_*.zip" -o -name "backup_${target_server_id}_*.tar.gz" \) -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+                        
+                        # Метод 2: find с stat (универсальный)
+                        if [ -z "$latest" ] || [ ! -f "$latest" ]; then
+                            latest=$(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "backup_${target_server_id}_*.zip" -o -name "backup_${target_server_id}_*.tar.gz" \) -exec stat -c '%Y %n' {} \; 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)
+                        fi
+                        
+                        # Метод 3: ls (fallback)
+                        if [ -z "$latest" ] || [ ! -f "$latest" ]; then
+                            latest=$(ls -t "$BACKUP_DIR"/backup_${target_server_id}_*.zip "$BACKUP_DIR"/backup_${target_server_id}_*.tar.gz 2>/dev/null | head -1)
+                        fi
+                        
                         if [ -n "$latest" ] && [ -f "$latest" ]; then
-                            upload_to_gdrive "$latest" && echo "✅ Загружено на Google Drive"
-                            rotate_gdrive_backups
+                            echo "Найден бэкап для загрузки: $(basename "$latest")"
+                            if upload_to_gdrive "$latest"; then
+                                echo "✅ Загружено на Google Drive"
+                                rotate_gdrive_backups
+                            else
+                                echo "❌ Ошибка загрузки на Google Drive" >&2
+                            fi
+                        else
+                            echo "⚠️ Не найден локальный бэкап для загрузки на Google Drive" >&2
                         fi
                     fi
                     ;;
