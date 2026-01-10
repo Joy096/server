@@ -1471,12 +1471,72 @@ restore_backup() {
 
     if ! $archive_cmd_success; then error "Ошибка при распаковке архива."; sudo rm -rf "$temp_dir"; return 1; fi
 
-    # Определяем источник восстановления
-    local restore_source="$temp_dir"
-    if [ -n "$extracted_subdir_name" ] && [ -d "$temp_dir/$extracted_subdir_name" ]; then
-       restore_source="$temp_dir/$extracted_subdir_name"
-       msg "Обнаружена вложенная папка в архиве: '$extracted_subdir_name'"
+    # Небольшая задержка, чтобы файлы точно записались на диск
+    sleep 0.5
+
+    # Определяем источник восстановления - используем ту же логику, что и в restore_from_gdrive
+    local restore_source=""
+    
+    # Вариант 1: backup_data (новый формат)
+    if [ -d "$temp_dir/backup_data" ]; then
+        restore_source="$temp_dir/backup_data"
+    else
+        # Вариант 2: ищем любую папку в temp_dir используя find
+        local found_dirs=()
+        local preferred_dir=""
+        local temp_dir_normalized="${temp_dir%/}"
+        
+        while IFS= read -r dir; do
+            local dir_normalized="${dir%/}"
+            if [ "$dir_normalized" != "$temp_dir_normalized" ] && [ -n "$dir" ] && [ -d "$dir" ]; then
+                local file_count=$(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+                if [ "$file_count" -gt 0 ]; then
+                    found_dirs+=("$dir")
+                    # Предпочитаем папку с признаками бэкапа сервера
+                    if [ -f "$dir/server.properties" ] || [ -d "$dir/worlds" ] || [ -f "$dir/bedrock_server" ] || [ -f "$dir/backup_info.txt" ]; then
+                        preferred_dir="$dir"
+                    fi
+                fi
+            fi
+        done < <(find "$temp_dir" -maxdepth 1 -type d 2>/dev/null)
+        
+        # Fallback: если find не нашёл, пробуем через ls
+        if [ ${#found_dirs[@]} -eq 0 ]; then
+            for dir in "$temp_dir"/*; do
+                if [ -d "$dir" ] && [ "$(basename "$dir")" != "." ] && [ "$(basename "$dir")" != ".." ]; then
+                    local file_count=$(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+                    if [ "$file_count" -gt 0 ]; then
+                        found_dirs+=("$dir")
+                        if [ -f "$dir/server.properties" ] || [ -d "$dir/worlds" ] || [ -f "$dir/bedrock_server" ] || [ -f "$dir/backup_info.txt" ]; then
+                            preferred_dir="$dir"
+                        fi
+                    fi
+                fi
+            done
+        fi
+        
+        # Используем предпочтительную папку или первую найденную
+        if [ -n "$preferred_dir" ] && [ -d "$preferred_dir" ]; then
+            restore_source="$preferred_dir"
+        elif [ ${#found_dirs[@]} -eq 1 ] && [ -d "${found_dirs[0]}" ]; then
+            restore_source="${found_dirs[0]}"
+        elif [ ${#found_dirs[@]} -gt 1 ]; then
+            restore_source="${found_dirs[0]}"
+        # Вариант 3: содержимое напрямую в temp_dir
+        elif [ -f "$temp_dir/server.properties" ] || [ -d "$temp_dir/worlds" ]; then
+            restore_source="$temp_dir"
+        fi
     fi
+    
+    if [ -z "$restore_source" ] || [ ! -d "$restore_source" ]; then
+        error "Не удалось определить источник восстановления в распакованном архиве"
+        msg "Содержимое временной директории:"
+        ls -la "$temp_dir" 2>/dev/null | head -20
+        sudo rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    msg "Источник восстановления: $restore_source"
 
     # Определяем тип бэкапа и целевую директорию
     local restore_target_dir="$DEFAULT_INSTALL_DIR"
@@ -6008,28 +6068,100 @@ restore_from_gdrive() {
         fi
     fi
     
+    # Небольшая задержка, чтобы файлы точно записались на диск
+    sleep 0.5
+    
     # Восстановление - проверяем несколько вариантов структуры
     local backup_data_dir=""
     
     # Вариант 1: backup_data (новый формат)
     if [ -d "$temp_dir/backup_data" ]; then
         backup_data_dir="$temp_dir/backup_data"
-    # Вариант 2: имя папки бэкапа (старый формат)
-    elif [ -d "$temp_dir/backup_${ACTIVE_SERVER_ID}_"* ]; then
-        backup_data_dir=$(ls -d "$temp_dir/backup_${ACTIVE_SERVER_ID}_"* 2>/dev/null | head -1)
-    # Вариант 3: содержимое напрямую в temp_dir
-    elif [ -f "$temp_dir/server.properties" ] || [ -d "$temp_dir/worlds" ]; then
-        backup_data_dir="$temp_dir"
+    else
+        # Вариант 2: ищем любую папку в temp_dir используя find (более надёжно)
+        local found_dirs=()
+        local preferred_dir=""
+        
+        # Используем find для поиска всех директорий (кроме самой temp_dir)
+        # Нормализуем путь temp_dir (убираем trailing slash)
+        local temp_dir_normalized="${temp_dir%/}"
+        while IFS= read -r dir; do
+            # Пропускаем саму temp_dir
+            local dir_normalized="${dir%/}"
+            if [ "$dir_normalized" != "$temp_dir_normalized" ] && [ -n "$dir" ] && [ -d "$dir" ]; then
+                local file_count=$(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+                if [ "$file_count" -gt 0 ]; then
+                    found_dirs+=("$dir")
+                    msg "Найдена папка: $(basename "$dir") (элементов: $file_count)"
+                    # Предпочитаем папку с признаками бэкапа сервера
+                    if [ -f "$dir/server.properties" ] || [ -d "$dir/worlds" ] || [ -f "$dir/bedrock_server" ] || [ -f "$dir/backup_info.txt" ]; then
+                        preferred_dir="$dir"
+                        msg "  → Папка содержит признаки бэкапа сервера"
+                    fi
+                fi
+            fi
+        done < <(find "$temp_dir" -maxdepth 1 -type d 2>/dev/null)
+        
+        # Fallback: если find не нашёл, пробуем через ls
+        if [ ${#found_dirs[@]} -eq 0 ]; then
+            msg "Find не нашёл папки, пробуем через ls..."
+            for dir in "$temp_dir"/*; do
+                if [ -d "$dir" ] && [ "$(basename "$dir")" != "." ] && [ "$(basename "$dir")" != ".." ]; then
+                    local file_count=$(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+                    if [ "$file_count" -gt 0 ]; then
+                        found_dirs+=("$dir")
+                        msg "Найдена папка (через ls): $(basename "$dir") (элементов: $file_count)"
+                        if [ -f "$dir/server.properties" ] || [ -d "$dir/worlds" ] || [ -f "$dir/bedrock_server" ] || [ -f "$dir/backup_info.txt" ]; then
+                            preferred_dir="$dir"
+                            msg "  → Папка содержит признаки бэкапа сервера"
+                        fi
+                    fi
+                fi
+            done
+        fi
+        
+        msg "Всего найдено папок: ${#found_dirs[@]}"
+        
+        # Используем предпочтительную папку или первую найденную
+        if [ -n "$preferred_dir" ] && [ -d "$preferred_dir" ]; then
+            backup_data_dir="$preferred_dir"
+        elif [ ${#found_dirs[@]} -eq 1 ] && [ -d "${found_dirs[0]}" ]; then
+            # Если найдена только одна папка, используем её
+            backup_data_dir="${found_dirs[0]}"
+        elif [ ${#found_dirs[@]} -gt 1 ]; then
+            # Если несколько папок, используем первую
+            backup_data_dir="${found_dirs[0]}"
+        # Вариант 3: содержимое напрямую в temp_dir
+        elif [ -f "$temp_dir/server.properties" ] || [ -d "$temp_dir/worlds" ]; then
+            backup_data_dir="$temp_dir"
+        fi
     fi
     
     if [ -n "$backup_data_dir" ] && [ -d "$backup_data_dir" ]; then
         msg "Восстановление файлов из: $backup_data_dir"
+        # Показываем что найдено в папке для отладки
+        local found_files=$(find "$backup_data_dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+        msg "Найдено элементов в папке бэкапа: $found_files"
         sudo rsync -a --delete "$backup_data_dir/" "$DEFAULT_INSTALL_DIR/"
         sudo chown -R "$SERVER_USER":"$SERVER_USER" "$DEFAULT_INSTALL_DIR"
     else
         error "Структура бэкапа повреждена или не распознана"
         msg "Содержимое временной директории:"
         ls -la "$temp_dir" 2>/dev/null | head -20
+        msg ""
+        msg "Проверка найденных папок:"
+        for dir in "$temp_dir"/*; do
+            if [ -d "$dir" ]; then
+                local dir_name=$(basename "$dir")
+                if [ "$dir_name" != "." ] && [ "$dir_name" != ".." ]; then
+                    msg "  Папка: $dir_name"
+                    msg "    Содержит: $(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l) элементов"
+                    msg "    server.properties: $([ -f "$dir/server.properties" ] && echo 'да' || echo 'нет')"
+                    msg "    worlds: $([ -d "$dir/worlds" ] && echo 'да' || echo 'нет')"
+                    msg "    bedrock_server: $([ -f "$dir/bedrock_server" ] && echo 'да' || echo 'нет')"
+                fi
+            fi
+        done
         rm -rf "$temp_dir"
         return 1
     fi
@@ -6037,10 +6169,244 @@ restore_from_gdrive() {
     rm -rf "$temp_dir"
     
     msg "✅ Сервер восстановлен из Google Drive!"
-    read -p "Запустить сервер? (yes/no): " start_now
-    if [[ "$start_now" == "yes" ]]; then
-        start_server
+    
+    # Автоматический запуск сервера после восстановления
+    msg "Запуск сервера '$SERVICE_NAME' после восстановления..."
+    if ! start_server; then
+        error "Не удалось запустить сервер после восстановления. Проверьте логи."
+        return 1
     fi
+}
+
+# Восстановление из указанного файла
+restore_backup_from_file() {
+    if [ -z "$ACTIVE_SERVER_ID" ]; then 
+        error "Активный сервер не выбран для восстановления."
+        return 1
+    fi
+    
+    msg "--- Восстановление сервера (ID: $ACTIVE_SERVER_ID) из файла ---"
+    if ! is_server_installed; then 
+        error "Сервер (ID: $ACTIVE_SERVER_ID) не установлен."
+        return 1
+    fi
+    
+    echo ""
+    read -p "Введите полный путь к файлу резервной копии: " backup_file_path
+    
+    # Убираем кавычки, если пользователь их ввёл
+    backup_file_path=$(echo "$backup_file_path" | sed "s/^['\"]//; s/['\"]$//")
+    
+    # Проверяем, что файл существует
+    if [ ! -f "$backup_file_path" ]; then
+        error "Файл не найден: $backup_file_path"
+        return 1
+    fi
+    
+    # Проверяем, что это архив
+    local backup_name=$(basename "$backup_file_path")
+    if [[ ! "$backup_name" =~ \.(zip|tar\.gz)$ ]]; then
+        error "Файл должен быть архивом (.zip или .tar.gz): $backup_name"
+        return 1
+    fi
+    
+    # Показываем информацию о файле
+    local file_size=$(du -h "$backup_file_path" | cut -f1)
+    local file_date=$(date -r "$backup_file_path" "+%Y-%m-%d %H:%M" 2>/dev/null || stat -c %y "$backup_file_path" 2>/dev/null | cut -d' ' -f1-2)
+    msg "Файл: $backup_name"
+    msg "Размер: $file_size"
+    msg "Дата: $file_date"
+    
+    warning "ВНИМАНИЕ! Перезапишет ТЕКУЩИЕ файлы '$DEFAULT_INSTALL_DIR' сервера '$ACTIVE_SERVER_ID'!"
+    read -p "Восстановить из '$backup_name'? (yes/no): " RESTORE_CONFIRM
+    if [[ "$RESTORE_CONFIRM" != "yes" ]]; then 
+        msg "Восстановление отменено."
+        return 1
+    fi
+    
+    msg "Остановка сервера '$SERVICE_NAME'..."
+    if ! stop_server; then 
+        error "Не удалось остановить сервер. Восстановление прервано."
+        return 1
+    fi
+    sleep 2
+    
+    # Временная директория для распаковки
+    local temp_dir="/tmp/minecraft_restore_$(date +%s)_${ACTIVE_SERVER_ID}"
+    msg "Создание временной директории: $temp_dir"
+    sudo rm -rf "$temp_dir"
+    if ! mkdir -p "$temp_dir"; then 
+        error "Не удалось создать $temp_dir."
+        return 1
+    fi
+    
+    # Распаковка
+    msg "Распаковка архива '$backup_name'..."
+    local archive_cmd_success=false
+    if [[ "$backup_name" == *.zip ]]; then
+        if sudo unzip -q -o "$backup_file_path" -d "$temp_dir" > /dev/null 2>&1; then 
+            archive_cmd_success=true
+        fi
+    elif [[ "$backup_name" == *.tar.gz ]]; then
+        if sudo tar -xzf "$backup_file_path" -C "$temp_dir" > /dev/null 2>&1; then 
+            archive_cmd_success=true
+        fi
+    else
+        error "Неизвестный формат архива: $backup_name"
+        sudo rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    if ! $archive_cmd_success; then 
+        error "Ошибка при распаковке архива."
+        sudo rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    # Небольшая задержка, чтобы файлы точно записались на диск
+    sleep 0.5
+    
+    # Определяем источник восстановления - используем ту же логику, что и в restore_backup
+    local restore_source=""
+    
+    # Вариант 1: backup_data (новый формат)
+    if [ -d "$temp_dir/backup_data" ]; then
+        restore_source="$temp_dir/backup_data"
+    else
+        # Вариант 2: ищем любую папку в temp_dir используя find
+        local found_dirs=()
+        local preferred_dir=""
+        local temp_dir_normalized="${temp_dir%/}"
+        
+        while IFS= read -r dir; do
+            local dir_normalized="${dir%/}"
+            if [ "$dir_normalized" != "$temp_dir_normalized" ] && [ -n "$dir" ] && [ -d "$dir" ]; then
+                local file_count=$(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+                if [ "$file_count" -gt 0 ]; then
+                    found_dirs+=("$dir")
+                    # Предпочитаем папку с признаками бэкапа сервера
+                    if [ -f "$dir/server.properties" ] || [ -d "$dir/worlds" ] || [ -f "$dir/bedrock_server" ] || [ -f "$dir/backup_info.txt" ]; then
+                        preferred_dir="$dir"
+                    fi
+                fi
+            fi
+        done < <(find "$temp_dir" -maxdepth 1 -type d 2>/dev/null)
+        
+        # Fallback: если find не нашёл, пробуем через ls
+        if [ ${#found_dirs[@]} -eq 0 ]; then
+            for dir in "$temp_dir"/*; do
+                if [ -d "$dir" ] && [ "$(basename "$dir")" != "." ] && [ "$(basename "$dir")" != ".." ]; then
+                    local file_count=$(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+                    if [ "$file_count" -gt 0 ]; then
+                        found_dirs+=("$dir")
+                        if [ -f "$dir/server.properties" ] || [ -d "$dir/worlds" ] || [ -f "$dir/bedrock_server" ] || [ -f "$dir/backup_info.txt" ]; then
+                            preferred_dir="$dir"
+                        fi
+                    fi
+                fi
+            done
+        fi
+        
+        # Используем предпочтительную папку или первую найденную
+        if [ -n "$preferred_dir" ] && [ -d "$preferred_dir" ]; then
+            restore_source="$preferred_dir"
+        elif [ ${#found_dirs[@]} -eq 1 ] && [ -d "${found_dirs[0]}" ]; then
+            restore_source="${found_dirs[0]}"
+        elif [ ${#found_dirs[@]} -gt 1 ]; then
+            restore_source="${found_dirs[0]}"
+        # Вариант 3: содержимое напрямую в temp_dir
+        elif [ -f "$temp_dir/server.properties" ] || [ -d "$temp_dir/worlds" ]; then
+            restore_source="$temp_dir"
+        fi
+    fi
+    
+    if [ -z "$restore_source" ] || [ ! -d "$restore_source" ]; then
+        error "Не удалось определить источник восстановления в распакованном архиве"
+        msg "Содержимое временной директории:"
+        ls -la "$temp_dir" 2>/dev/null | head -20
+        sudo rm -rf "$temp_dir"
+        return 1
+    fi
+    
+    msg "Источник восстановления: $restore_source"
+    
+    # Определяем тип бэкапа и целевую директорию
+    local restore_target_dir="$DEFAULT_INSTALL_DIR"
+    local backup_is_worlds_only=false
+    if [ -f "$restore_source/backup_info.txt" ]; then
+        if grep -q "Worlds only: true" "$restore_source/backup_info.txt"; then
+            backup_is_worlds_only=true
+            msg "Это резервная копия только миров."
+            restore_target_dir="$DEFAULT_INSTALL_DIR/worlds"
+            if [ -d "$restore_source/worlds" ]; then 
+                restore_source="$restore_source/worlds"
+            fi
+            sudo mkdir -p "$restore_target_dir"
+            sudo chown "$SERVER_USER":"$SERVER_USER" "$restore_target_dir"
+        else
+            msg "Это полная резервная копия сервера."
+        fi
+    else
+        warning "Файл backup_info.txt не найден. Считаем, что это ПОЛНЫЙ бэкап."
+    fi
+    
+    # Бэкап текущего состояния
+    msg "Создание временной копии текущего состояния '$restore_target_dir'..."
+    local current_backup_dir="/tmp/pre_restore_state_${ACTIVE_SERVER_ID}_$(date +%s)"
+    if sudo rsync -a "$restore_target_dir/" "$current_backup_dir/" > /dev/null 2>&1; then
+        msg "Текущее состояние сохранено в $current_backup_dir"
+    else
+        warning "Не удалось создать копию текущего состояния."
+    fi
+    
+    # Очистка целевой директории
+    msg "Очистка целевой директории: $restore_target_dir"
+    if [ -d "$restore_target_dir" ]; then
+        sudo find "$restore_target_dir" -mindepth 1 -delete || warning "Не удалось полностью очистить $restore_target_dir"
+    fi
+    
+    # Восстановление файлов
+    msg "Восстановление файлов из '$restore_source' в '$restore_target_dir'..."
+    if ! sudo rsync -a "$restore_source/" "$restore_target_dir/"; then
+        warning "Ошибка при восстановлении файлов! Попытка вернуть предыдущее состояние..."
+        sudo find "$restore_target_dir" -mindepth 1 -delete
+        if [ -d "$current_backup_dir" ]; then
+            sudo rsync -a "$current_backup_dir/" "$restore_target_dir/"
+            sudo rm -rf "$current_backup_dir"
+        fi
+        sudo rm -rf "$temp_dir"
+        error "Ошибка при восстановлении файлов. Предыдущее состояние (если возможно) возвращено."
+        start_server
+        return 1
+    fi
+    
+    # Установка прав
+    msg "Обновление прав на восстановленные файлы в '$restore_target_dir'..."
+    if ! sudo chown -R "$SERVER_USER":"$SERVER_USER" "$restore_target_dir"; then
+        warning "Не удалось изменить владельца восстановленных файлов."
+    fi
+    # Права на исполнение (только если полный бэкап)
+    if ! $backup_is_worlds_only && [ -f "$restore_target_dir/bedrock_server" ]; then
+        if ! sudo chmod +x "$restore_target_dir/bedrock_server"; then
+            warning "Не удалось установить права на исполнение для bedrock_server."
+        fi
+    fi
+    
+    # Очистка временных файлов
+    msg "Удаление временных файлов..."
+    sudo rm -rf "$temp_dir"
+    if [ -d "$current_backup_dir" ]; then 
+        sudo rm -rf "$current_backup_dir"
+    fi
+    
+    # Запуск сервера
+    msg "Запуск сервера '$SERVICE_NAME' после восстановления..."
+    if ! start_server; then
+        error "Не удалось запустить сервер после восстановления. Проверьте логи."
+        return 1
+    fi
+    
+    msg "✅ Восстановление из файла завершено успешно."
 }
 
 # Восстановление с выбором источника
@@ -6059,6 +6425,7 @@ restore_backup_with_storage() {
     else
         echo "2. Google Диска (не настроен)"
     fi
+    echo "3. Из файла (указать путь)"
     echo "0. Отмена"
     
     local choice
@@ -6074,6 +6441,7 @@ restore_backup_with_storage() {
                 error "Google Drive не настроен"
             fi
             ;;
+        3) restore_backup_from_file ;;
         0) return 0 ;;
     esac
 }
