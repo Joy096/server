@@ -5679,13 +5679,14 @@ select_backup_storage() {
         gdrive_status="✅ настроен"
     fi
     
-    echo ""
-    echo "Выберите хранилище:"
-    echo "1. Локальный сервер ($BACKUP_DIR)"
-    echo "2. Оба (локальный + Google Диск) ($gdrive_status)"
-    echo "---"
-    echo "9. Настроить Google Диск"
-    echo "0. Отмена"
+    # Выводим меню в stderr, чтобы оно не попало в переменную при вызове через $()
+    echo "" >&2
+    echo "Выберите хранилище:" >&2
+    echo "1. Локальный сервер ($BACKUP_DIR)" >&2
+    echo "2. Оба (локальный + Google Диск) ($gdrive_status)" >&2
+    echo "---" >&2
+    echo "9. Настроить Google Диск" >&2
+    echo "0. Отмена" >&2
     
     local storage_choice
     read -p "Ваш выбор [1]: " storage_choice
