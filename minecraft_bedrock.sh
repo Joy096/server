@@ -1263,47 +1263,94 @@ restore_backup() {
 # Ротация резервных копий (удаление старых) - для КАЖДОГО сервера отдельно
 rotate_backups() {
     msg "Проверка ротации резервных копий (Макс: $MAX_BACKUPS_PER_SERVER на сервер)..."
-    if [ ! -d "$BACKUP_DIR" ]; then return 0; fi
-
-    # Получаем список всех уникальных server_id из имён бэкапов
-    # Формат имени: backup_<server_id>_<дата>_<время>.zip
-    local server_ids=$(ls "$BACKUP_DIR"/backup_*.zip "$BACKUP_DIR"/backup_*.tar.gz 2>/dev/null | \
-        xargs -I {} basename {} | \
-        sed -n 's/^backup_\([^_]*\)_.*/\1/p' | \
-        sort -u)
     
-    if [ -z "$server_ids" ]; then
-        msg "Бэкапы не найдены."
+    if [ ! -d "$BACKUP_DIR" ]; then 
+        msg "Директория бэкапов не существует: $BACKUP_DIR"
+        return 0 
+    fi
+
+    # Используем find для надёжного поиска файлов
+    local all_backups=()
+    while IFS= read -r -d '' f; do
+        all_backups+=("$f")
+    done < <(find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "backup_*.zip" -o -name "backup_*.tar.gz" \) -print0 2>/dev/null)
+    
+    if [ ${#all_backups[@]} -eq 0 ]; then
+        msg "Бэкапы не найдены в $BACKUP_DIR"
         return 0
     fi
+    
+    msg "Найдено бэкапов: ${#all_backups[@]}"
+
+    # Получаем список уникальных server_id из имён файлов
+    # Формат: backup_<server_id>_<YYYY-MM-DD>_<HH-MM-SS>.zip
+    local server_ids=()
+    for backup in "${all_backups[@]}"; do
+        local filename=$(basename "$backup")
+        # Извлекаем server_id: убираем "backup_" и "_YYYY-MM-DD_HH-MM-SS.ext"
+        local sid=$(echo "$filename" | sed -E 's/^backup_(.*)_[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}-[0-9]{2}\.(zip|tar\.gz)$/\1/')
+        if [ -n "$sid" ] && [ "$sid" != "$filename" ]; then
+            # Проверяем, есть ли уже в массиве
+            local found=false
+            for existing in "${server_ids[@]}"; do
+                if [ "$existing" = "$sid" ]; then
+                    found=true
+                    break
+                fi
+            done
+            if [ "$found" = false ]; then
+                server_ids+=("$sid")
+            fi
+        fi
+    done
+    
+    if [ ${#server_ids[@]} -eq 0 ]; then
+        msg "Не удалось извлечь ID серверов из имён бэкапов."
+        return 0
+    fi
+    
+    msg "Серверы с бэкапами: ${server_ids[*]}"
 
     local total_deleted=0
     
     # Для каждого сервера проверяем количество бэкапов
-    for server_id in $server_ids; do
-        # Получаем бэкапы этого сервера, отсортированные по времени (новые сверху)
-        local server_backups=$(ls -t "$BACKUP_DIR"/backup_${server_id}_*.zip "$BACKUP_DIR"/backup_${server_id}_*.tar.gz 2>/dev/null)
-        local backup_count=$(echo "$server_backups" | grep -c .)
+    for server_id in "${server_ids[@]}"; do
+        # Собираем бэкапы этого сервера
+        local server_backups=()
+        for backup in "${all_backups[@]}"; do
+            local filename=$(basename "$backup")
+            if [[ "$filename" == backup_${server_id}_* ]]; then
+                server_backups+=("$backup")
+            fi
+        done
+        
+        local backup_count=${#server_backups[@]}
+        msg "Сервер '$server_id': $backup_count бэкапов"
         
         if [ "$backup_count" -gt "$MAX_BACKUPS_PER_SERVER" ]; then
-            # Оставляем первые MAX_BACKUPS_PER_SERVER, остальные удаляем
-            local backups_to_delete=$(echo "$server_backups" | tail -n +$((MAX_BACKUPS_PER_SERVER + 1)))
+            # Сортируем по времени модификации (новые первые) через ls -t
+            local sorted_backups=()
+            while IFS= read -r f; do
+                [ -n "$f" ] && sorted_backups+=("$f")
+            done < <(ls -t "${server_backups[@]}" 2>/dev/null)
             
-            local OLD_IFS=$IFS
-            IFS=$'\n'
-            for backup in $backups_to_delete; do
+            # Удаляем старые (после первых MAX_BACKUPS_PER_SERVER)
+            for ((i=MAX_BACKUPS_PER_SERVER; i<${#sorted_backups[@]}; i++)); do
+                local backup="${sorted_backups[$i]}"
                 if [ -f "$backup" ]; then
-                    sudo rm "$backup"
-                    msg "Удалён бэкап сервера '$server_id': $(basename "$backup")"
-                    ((total_deleted++))
+                    if sudo rm "$backup" 2>/dev/null; then
+                        msg "Удалён бэкап сервера '$server_id': $(basename "$backup")"
+                        ((total_deleted++))
+                    else
+                        warning "Не удалось удалить: $(basename "$backup")"
+                    fi
                 fi
             done
-            IFS=$OLD_IFS
         fi
     done
     
     if [ "$total_deleted" -eq 0 ]; then
-        msg "Ротация не требуется."
+        msg "Ротация не требуется (все серверы в пределах лимита)."
     else
         msg "Удалено старых бэкапов: $total_deleted"
     fi
@@ -3343,7 +3390,7 @@ rename_server_id() {
          error "Не удалось обновить '$SERVERS_CONFIG_FILE'. Проверьте вручную."
     fi
 
-    # 5. Обновление Cron задач (автообновление и бэкапы)
+    # 5. Обновление Cron задач (автообновление и бэкапы по расписанию)
     msg "Обновление задач планировщика (Cron)..."
     local cron_temp=$(mktemp)
     sudo crontab -l 2>/dev/null > "$cron_temp"
@@ -3366,7 +3413,7 @@ rename_server_id() {
         sed -i "s/--auto-backup-server $current_id$/--auto-backup-server $new_id/g" "$cron_temp"
         sed -i "s/minecraft_backup_${current_id}.log/minecraft_backup_${new_id}.log/g" "$cron_temp"
         
-        # Бэкап при выходе последнего игрока
+        # Бэкап при выходе последнего игрока (старые cron задачи, если есть)
         sed -i "s/minecraft_emptybackup_${current_id}/minecraft_emptybackup_${new_id}/g" "$cron_temp"
         sed -i "s/--check-empty-backup $current_id /--check-empty-backup $new_id /g" "$cron_temp"
         sed -i "s/--check-empty-backup $current_id$/--check-empty-backup $new_id/g" "$cron_temp"
@@ -3379,9 +3426,97 @@ rename_server_id() {
     fi
     rm "$cron_temp"
     
-    # 5.5. Переименование файла состояния игроков (для авто-бэкапа при выходе)
+    # 5.5. Обновление Systemd units для авто-бэкапа при выходе игроков
+    msg "Обновление systemd units для авто-бэкапа при выходе игроков..."
+    local old_service_name="minecraft-backup-monitor@${current_id}.service"
+    local old_timer_name="minecraft-backup-timer@${current_id}.timer"
+    local old_timer_service_name="minecraft-backup-timer@${current_id}.service"
+    
+    local new_service_name="minecraft-backup-monitor@${new_id}.service"
+    local new_timer_name="minecraft-backup-timer@${new_id}.timer"
+    local new_timer_service_name="minecraft-backup-timer@${new_id}.service"
+    
+    # Проверяем, существуют ли старые units
+    local has_old_units=false
+    if sudo systemctl list-units --type=service --all 2>/dev/null | grep -q "$old_service_name" || \
+       sudo systemctl list-units --type=timer --all 2>/dev/null | grep -q "$old_timer_name" || \
+       [ -f "/etc/systemd/system/${old_service_name}" ] || \
+       [ -f "/etc/systemd/system/${old_timer_name}" ]; then
+        has_old_units=true
+    fi
+    
+    if [ "$has_old_units" = true ]; then
+        # Сохраняем состояние (были ли они включены)
+        local was_service_enabled=false
+        local was_timer_enabled=false
+        local timer_interval="10"  # По умолчанию
+        
+        if sudo systemctl is-enabled --quiet "$old_service_name" 2>/dev/null; then
+            was_service_enabled=true
+        fi
+        if sudo systemctl is-enabled --quiet "$old_timer_name" 2>/dev/null; then
+            was_timer_enabled=true
+            # Пытаемся получить интервал из timer файла
+            if [ -f "/etc/systemd/system/${old_timer_name}" ]; then
+                local interval_line=$(grep "OnUnitActiveSec=" "/etc/systemd/system/${old_timer_name}" 2>/dev/null)
+                if [ -n "$interval_line" ]; then
+                    timer_interval=$(echo "$interval_line" | sed -n 's/.*OnUnitActiveSec=\([0-9]*\)min.*/\1/p')
+                    if [ -z "$timer_interval" ]; then
+                        timer_interval="10"
+                    fi
+                fi
+            fi
+        fi
+        
+        # Останавливаем и удаляем старые units
+        if sudo systemctl is-active --quiet "$old_service_name" 2>/dev/null; then
+            sudo systemctl stop "$old_service_name"
+        fi
+        if sudo systemctl is-active --quiet "$old_timer_name" 2>/dev/null; then
+            sudo systemctl stop "$old_timer_name"
+        fi
+        if sudo systemctl is-enabled --quiet "$old_service_name" 2>/dev/null; then
+            sudo systemctl disable "$old_service_name"
+        fi
+        if sudo systemctl is-enabled --quiet "$old_timer_name" 2>/dev/null; then
+            sudo systemctl disable "$old_timer_name"
+        fi
+        
+        if [ -f "/etc/systemd/system/${old_service_name}" ]; then
+            sudo rm "/etc/systemd/system/${old_service_name}"
+        fi
+        if [ -f "/etc/systemd/system/${old_timer_name}" ]; then
+            sudo rm "/etc/systemd/system/${old_timer_name}"
+        fi
+        if [ -f "/etc/systemd/system/${old_timer_service_name}" ]; then
+            sudo rm "/etc/systemd/system/${old_timer_service_name}"
+        fi
+        
+        # Создаём новые units с новым ID
+        if install_backup_monitor_service "$new_id"; then
+            if [ "$was_service_enabled" = true ]; then
+                sudo systemctl enable --now "$new_service_name"
+            fi
+        fi
+        
+        if install_backup_timer "$new_id" "$timer_interval"; then
+            if [ "$was_timer_enabled" = true ]; then
+                sudo systemctl enable --now "$new_timer_name"
+            fi
+        fi
+        
+        sudo systemctl daemon-reload
+        msg "Systemd units обновлены."
+    else
+        msg "Systemd units для авто-бэкапа не найдены."
+    fi
+    
+    # 5.6. Переименование файлов состояния и блокировки (для авто-бэкапа при выходе)
     if [ -f "/tmp/mc_player_state_${current_id}" ]; then
-        mv "/tmp/mc_player_state_${current_id}" "/tmp/mc_player_state_${new_id}" 2>/dev/null
+        sudo mv "/tmp/mc_player_state_${current_id}" "/tmp/mc_player_state_${new_id}" 2>/dev/null
+    fi
+    if [ -f "/tmp/mc_backup_lock_${current_id}" ]; then
+        sudo rm -f "/tmp/mc_backup_lock_${current_id}" 2>/dev/null
     fi
 
     # 6. Обновление текущего состояния
@@ -4254,6 +4389,291 @@ setup_auto_backup_server() {
 }
 
 # Настройка автобэкапа при выходе последнего игрока
+# Создание скрипта мониторинга логов для systemd service
+create_log_monitor_script() {
+    local script_path="/usr/local/bin/mc-log-monitor.sh"
+    
+    # Проверяем, существует ли уже скрипт
+    if [ -f "$script_path" ]; then
+        return 0  # Уже существует
+    fi
+    
+    msg "Создание скрипта мониторинга логов..."
+    
+    sudo tee "$script_path" > /dev/null << 'MONITOR_EOF'
+#!/bin/bash
+# Мониторинг логов Minecraft Bedrock Server для авто-бэкапа при выходе игроков
+
+SERVER_ID="$1"
+SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
+
+if [ -z "$SERVER_ID" ]; then
+    echo "Ошибка: Не указан ID сервера" >&2
+    exit 1
+fi
+
+# Определяем путь к серверу
+SERVERS_CONFIG_FILE="/etc/minecraft_servers/servers.conf"
+if [ ! -f "$SERVERS_CONFIG_FILE" ]; then
+    echo "Ошибка: Файл конфигурации не найден: $SERVERS_CONFIG_FILE" >&2
+    exit 1
+fi
+
+# Проверяем права доступа
+if [ ! -r "$SERVERS_CONFIG_FILE" ]; then
+    echo "Ошибка: Файл конфигурации недоступен для чтения: $SERVERS_CONFIG_FILE" >&2
+    echo "Попробуйте выполнить: sudo chmod 644 $SERVERS_CONFIG_FILE" >&2
+    exit 1
+fi
+
+# Игнорируем комментарии и пустые строки, ищем точное совпадение ID
+# Формат: SERVER_ID:NAME:PORT:INSTALL_DIR:SERVICE_NAME
+SERVER_DIR=$(grep -v '^#' "$SERVERS_CONFIG_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | grep "^${SERVER_ID}:" | head -1 | cut -d':' -f4)
+
+if [ -z "$SERVER_DIR" ]; then
+    echo "Ошибка: Сервер '$SERVER_ID' не найден в конфигурации" >&2
+    echo "Доступные серверы в конфиге:" >&2
+    grep -v '^#' "$SERVERS_CONFIG_FILE" 2>/dev/null | grep -v '^[[:space:]]*$' | cut -d':' -f1 | sed 's/^/  - /' >&2
+    exit 1
+fi
+
+# Проверяем, что путь существует
+if [ ! -d "$SERVER_DIR" ]; then
+    echo "Ошибка: Директория сервера не найдена: $SERVER_DIR" >&2
+    exit 1
+fi
+
+LOG_FILE="${SERVER_DIR}/logs/latest.log"
+STATE_FILE="/tmp/mc_player_state_${SERVER_ID}"
+LOCK_FILE="/tmp/mc_backup_lock_${SERVER_ID}"
+
+# Проверяем существование лог-файла
+if [ ! -f "$LOG_FILE" ]; then
+    echo "Предупреждение: Лог-файл не найден: $LOG_FILE (сервер может быть не запущен)" >&2
+    # Не выходим, ждём появления файла
+fi
+
+# Функция проверки и создания бэкапа
+check_and_backup() {
+    # Блокировка от одновременного запуска
+    if [ -f "$LOCK_FILE" ]; then
+        local lock_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+        if ps -p "$lock_pid" > /dev/null 2>&1; then
+            return 0  # Уже выполняется
+        fi
+    fi
+    
+    echo $$ > "$LOCK_FILE"
+    
+    # Вызываем логику проверки через основной скрипт
+    curl -Ls "$SCRIPT_URL" | bash -s -- --check-empty-backup "$SERVER_ID" > /dev/null 2>&1
+    
+    rm -f "$LOCK_FILE"
+}
+
+# Основной цикл мониторинга
+# Используем tail -F для отслеживания новых строк в реальном времени
+if [ -f "$LOG_FILE" ]; then
+    tail -F -n 0 "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+        # Ищем строки, указывающие на выход игрока
+        # Формат лога Bedrock: [2024-01-01 12:00:00 INFO] Player PlayerName left the game
+        # Или: [INFO] Player disconnected
+        if echo "$line" | grep -qiE "(left the game|disconnected|disconnected from)"; then
+            # Небольшая задержка, чтобы сервер успел обновить список игроков
+            sleep 2
+            
+            # Проверяем и создаём бэкап если нужно
+            check_and_backup
+        fi
+    done
+else
+    # Если файл не существует, ждём его появления
+    while [ ! -f "$LOG_FILE" ]; do
+        sleep 5
+    done
+    # После появления файла запускаем мониторинг
+    tail -F -n 0 "$LOG_FILE" 2>/dev/null | while IFS= read -r line; do
+        if echo "$line" | grep -qiE "(left the game|disconnected|disconnected from)"; then
+            sleep 2
+            check_and_backup
+        fi
+    done
+fi
+MONITOR_EOF
+
+    sudo chmod +x "$script_path"
+    msg "✅ Скрипт мониторинга создан: $script_path"
+}
+
+# Установка systemd service для мониторинга логов
+install_backup_monitor_service() {
+    local server_id="$1"
+    
+    if [ -z "$server_id" ]; then
+        error "ID сервера не указан"
+        return 1
+    fi
+    
+    # Создаём скрипт мониторинга, если его нет
+    create_log_monitor_script
+    
+    local service_name="minecraft-backup-monitor@${server_id}.service"
+    local service_file="/etc/systemd/system/${service_name}"
+    
+    # Загружаем конфиг сервера для получения SERVER_USER
+    if ! load_server_config "$server_id"; then
+        error "Не удалось загрузить конфиг сервера"
+        return 1
+    fi
+    
+    msg "Создание systemd service для мониторинга логов..."
+    
+    sudo tee "$service_file" > /dev/null << EOF
+[Unit]
+Description=Minecraft Backup Monitor for server ${server_id}
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=${SERVER_USER}
+Group=${SERVER_USER}
+ExecStart=/usr/local/bin/mc-log-monitor.sh ${server_id}
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Ограничения ресурсов
+MemoryLimit=100M
+CPUQuota=10%
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Проверяем и устанавливаем права доступа к файлу конфигурации
+    local config_file="/etc/minecraft_servers/servers.conf"
+    if [ -f "$config_file" ]; then
+        # Убеждаемся, что файл доступен для чтения пользователю сервера
+        if ! sudo -u "$SERVER_USER" test -r "$config_file" 2>/dev/null; then
+            msg "Установка прав доступа к файлу конфигурации..."
+            sudo chmod 644 "$config_file" 2>/dev/null || true
+        fi
+    fi
+    
+    sudo systemctl daemon-reload
+    msg "✅ Service создан: $service_name"
+}
+
+# Установка systemd timer для резервной проверки
+install_backup_timer() {
+    local server_id="$1"
+    local interval_minutes="${2:-10}"  # По умолчанию 10 минут
+    
+    if [ -z "$server_id" ]; then
+        error "ID сервера не указан"
+        return 1
+    fi
+    
+    local timer_name="minecraft-backup-timer@${server_id}.timer"
+    local service_name="minecraft-backup-timer@${server_id}.service"
+    local timer_file="/etc/systemd/system/${timer_name}"
+    local service_file="/etc/systemd/system/${service_name}"
+    
+    local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
+    
+    msg "Создание systemd timer для резервной проверки..."
+    
+    # Создаём service файл
+    sudo tee "$service_file" > /dev/null << EOF
+[Unit]
+Description=Backup Check Service for server ${server_id} (fallback)
+After=network.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/bin/bash -c 'curl -Ls ${script_url} | bash -s -- --check-empty-backup ${server_id}'
+StandardOutput=journal
+StandardError=journal
+EOF
+
+    # Создаём timer файл
+    sudo tee "$timer_file" > /dev/null << EOF
+[Unit]
+Description=Backup Timer for Minecraft server ${server_id}
+After=network.target
+
+[Timer]
+# Запуск каждые N минут (OnCalendar более надёжен чем OnUnitActiveSec)
+OnCalendar=*:0/${interval_minutes}
+# Запуск сразу при активации timer'а
+OnActiveSec=10
+# Запуск даже если таймер был пропущен
+Persistent=true
+# Точность: до 30 секунд
+AccuracySec=30
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    sudo systemctl daemon-reload
+    msg "✅ Timer создан: $timer_name (интервал: ${interval_minutes} минут)"
+}
+
+# Удаление systemd service и timer для авто-бэкапа
+remove_backup_monitor_systemd() {
+    local server_id="$1"
+    
+    if [ -z "$server_id" ]; then
+        error "ID сервера не указан"
+        return 1
+    fi
+    
+    local service_name="minecraft-backup-monitor@${server_id}.service"
+    local timer_name="minecraft-backup-timer@${server_id}.timer"
+    local timer_service_name="minecraft-backup-timer@${server_id}.service"
+    
+    msg "Удаление systemd units для авто-бэкапа..."
+    
+    # Останавливаем и отключаем service (игнорируем ошибки)
+    sudo systemctl stop "$service_name" 2>/dev/null || true
+    sudo systemctl disable "$service_name" 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${service_name}" 2>/dev/null || true
+    
+    # Останавливаем и отключаем timer (игнорируем ошибки)
+    sudo systemctl stop "$timer_name" 2>/dev/null || true
+    sudo systemctl disable "$timer_name" 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${timer_name}" 2>/dev/null || true
+    sudo rm -f "/etc/systemd/system/${timer_service_name}" 2>/dev/null || true
+    
+    # Сбрасываем состояние systemd
+    sudo systemctl daemon-reload
+    sudo systemctl reset-failed "$service_name" 2>/dev/null || true
+    sudo systemctl reset-failed "$timer_name" 2>/dev/null || true
+    
+    # Удаляем файлы состояния и блокировки
+    sudo rm -f "/tmp/mc_player_state_${server_id}" 2>/dev/null || true
+    sudo rm -f "/tmp/mc_backup_lock_${server_id}" 2>/dev/null || true
+    
+    msg "✅ Systemd units удалены"
+}
+
+# Удаление старых cron задач для авто-бэкапа при выходе (миграция)
+remove_old_cron_backup_on_empty() {
+    local server_id="$1"
+    local cron_marker="minecraft_emptybackup_${server_id}"
+    
+    local current_cron=$(sudo crontab -l 2>/dev/null)
+    if echo "$current_cron" | grep -Fq "$cron_marker"; then
+        msg "Удаление старой cron задачи..."
+        echo "$current_cron" | grep -Fv "$cron_marker" | sudo crontab -
+        msg "✅ Старая cron задача удалена"
+    fi
+}
+
 setup_auto_backup_on_empty() {
     if [ -z "$ACTIVE_SERVER_ID" ]; then error "Активный сервер не выбран."; return 1; fi
     
@@ -4261,24 +4681,38 @@ setup_auto_backup_on_empty() {
     msg "Сервер: '$ACTIVE_SERVER_ID'"
     msg ""
     msg "Как это работает:"
-    msg "  • Cron проверяет количество игроков каждые N минут"
+    msg "  • Systemd Timer проверяет количество игроков каждые N минут"
     msg "  • Если игроки были, а теперь сервер пуст → создаётся бэкап"
     msg "  • Не более одного бэкапа за сессию (пока кто-то не зайдёт снова)"
 
-    # URL скрипта на GitHub
-    local script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/minecraft_bedrock.sh"
+    local timer_name="minecraft-backup-timer@${ACTIVE_SERVER_ID}.timer"
+    local timer_service_name="minecraft-backup-timer@${ACTIVE_SERVER_ID}.service"
+    local old_service_name="minecraft-backup-monitor@${ACTIVE_SERVER_ID}.service"
+    
+    # Проверяем, настроено ли уже
+    local is_timer_exists=false
+    if [ -f "/etc/systemd/system/${timer_name}" ] || [ -f "/etc/systemd/system/${timer_service_name}" ]; then
+        is_timer_exists=true
+    fi
+    
+    # Проверяем старые units и cron
+    local has_old_service=false
+    if [ -f "/etc/systemd/system/${old_service_name}" ]; then
+        has_old_service=true
+    fi
     local cron_marker="minecraft_emptybackup_${ACTIVE_SERVER_ID}"
-
-    # Проверяем, есть ли уже задание
-    local current_cron=$(sudo crontab -l 2>/dev/null)
-    if echo "$current_cron" | grep -Fq "$cron_marker"; then
+    local has_cron=false
+    if sudo crontab -l 2>/dev/null | grep -Fq "$cron_marker"; then
+        has_cron=true
+    fi
+    
+    if [ "$is_timer_exists" = true ] || [ "$has_cron" = true ]; then
         msg ""
         msg "Авто-бэкап при выходе игроков для '$ACTIVE_SERVER_ID' уже настроен."
         read -p "Хотите удалить или изменить интервал? (delete/change/cancel): " ACTION
         if [[ "$ACTION" == "delete" ]]; then
-            echo "$current_cron" | grep -Fv "$cron_marker" | sudo crontab -
-            # Удаляем файл состояния
-            sudo rm -f "/tmp/mc_player_state_${ACTIVE_SERVER_ID}" 2>/dev/null
+            remove_backup_monitor_systemd "$ACTIVE_SERVER_ID"
+            remove_old_cron_backup_on_empty "$ACTIVE_SERVER_ID"
             msg "Авто-бэкап при выходе игроков для '$ACTIVE_SERVER_ID' отключен."
             return 0
         elif [[ "$ACTION" != "change" ]]; then
@@ -4286,46 +4720,59 @@ setup_auto_backup_on_empty() {
         fi
     fi
 
+    # Удаляем старые компоненты
+    if [ "$has_old_service" = true ]; then
+        msg "Удаление старого service мониторинга логов (не работает для Bedrock)..."
+        sudo systemctl stop "$old_service_name" 2>/dev/null || true
+        sudo systemctl disable "$old_service_name" 2>/dev/null || true
+        sudo rm -f "/etc/systemd/system/${old_service_name}" 2>/dev/null || true
+    fi
+    if [ "$has_cron" = true ]; then
+        remove_old_cron_backup_on_empty "$ACTIVE_SERVER_ID"
+    fi
+
     echo ""
     echo "Выберите интервал проверки:"
-    echo "1. Каждую минуту (быстрая реакция, больше нагрузка)"
+    echo "1. Каждую минуту (быстрая реакция)"
     echo "2. Каждые 2 минуты (рекомендуется)"
-    echo "3. Каждые 5 минут (меньше нагрузка)"
+    echo "3. Каждые 5 минут"
     echo "4. Каждые 10 минут"
     read -p "Ваш выбор [2]: " choice
     choice=${choice:-2}
 
-    local cron_schedule=""
+    local timer_interval=""
     case $choice in
-        1) cron_schedule="* * * * *" ;;
-        2) cron_schedule="*/2 * * * *" ;;
-        3) cron_schedule="*/5 * * * *" ;;
-        4) cron_schedule="*/10 * * * *" ;;
-        *) msg "Неверный выбор, используется 2 минуты."; cron_schedule="*/2 * * * *" ;;
+        1) timer_interval="1" ;;
+        2) timer_interval="2" ;;
+        3) timer_interval="5" ;;
+        4) timer_interval="10" ;;
+        *) msg "Неверный выбор, используется 2 минуты."; timer_interval="2" ;;
     esac
 
-    # Формируем задачу
-    local log_file="/var/log/minecraft_emptybackup_${ACTIVE_SERVER_ID}.log"
-    local new_job="$cron_schedule tmp=\$(mktemp); curl -Ls $script_url | bash -s -- --check-empty-backup $ACTIVE_SERVER_ID > \$tmp 2>&1; if [ -s \$tmp ]; then { cat \$tmp; cat $log_file 2>/dev/null || true; } > ${log_file}.new && mv ${log_file}.new $log_file; fi; rm -f \$tmp # $cron_marker"
-
-    # Удаляем старую задачу и добавляем новую
-    local temp_cron=$(mktemp)
-    sudo crontab -l 2>/dev/null | grep -Fv "$cron_marker" > "$temp_cron"
-    echo "$new_job" >> "$temp_cron"
-    
-    if sudo crontab "$temp_cron"; then
-        msg ""
-        msg "✅ Авто-бэкап при выходе последнего игрока настроен!"
-        msg "   Интервал проверки: $cron_schedule"
-        msg "   Хранилище: $BACKUP_DIR"
-        msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
-        msg "   Логи: $log_file"
-        msg ""
-        msg "Бэкап будет создан автоматически, когда последний игрок покинет сервер."
-    else
-        error "Не удалось обновить crontab."
+    # Устанавливаем только Timer
+    if ! install_backup_timer "$ACTIVE_SERVER_ID" "$timer_interval"; then
+        error "Не удалось установить timer"
+        return 1
     fi
-    rm -f "$temp_cron"
+    
+    # Запускаем и включаем timer
+    if sudo systemctl enable --now "$timer_name"; then
+        msg "✅ Timer запущен и включен"
+    else
+        warning "Не удалось запустить timer, но он установлен"
+    fi
+    
+    local log_file="/var/log/minecraft_emptybackup_${ACTIVE_SERVER_ID}.log"
+    
+    msg ""
+    msg "✅ Авто-бэкап при выходе последнего игрока настроен!"
+    msg "   Интервал проверки: каждые ${timer_interval} мин."
+    msg "   Хранилище: $BACKUP_DIR"
+    msg "   Хранится копий: $MAX_BACKUPS_PER_SERVER (для каждого сервера)"
+    msg "   Логи: journalctl -u ${timer_service_name}"
+    msg ""
+    msg "Бэкап будет создан автоматически, когда последний игрок покинет сервер."
+    msg "Проверка статуса: sudo systemctl status ${timer_name}"
 }
 
 # Диагностика проблем с подключением
@@ -4666,6 +5113,7 @@ full_backup_menu() {
         echo "-----------------------------------"
         echo "3. Авто-бэкап для активного сервера"
         echo "4. Авто-бэкап для ВСЕХ серверов (по расписанию)"
+        echo "5. Очистить лишние бэкапы (ротация до $MAX_BACKUPS_PER_SERVER копий на сервер)"
         echo "-----------------------------------"
         echo "0. Назад в главное меню"
         
@@ -4699,6 +5147,10 @@ full_backup_menu() {
                 fi
                 ;;
             4) setup_auto_backup ;;
+            5) 
+                msg "Выполняется ротация бэкапов..."
+                rotate_backups
+                ;;
             0) return 0 ;;
             *) msg "Неверно.";;
         esac
