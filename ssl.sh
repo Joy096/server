@@ -79,6 +79,10 @@ if [ -d "/var/snap/nextcloud/" ]; then
     # Добавляем новый домен в доверенные для Nextcloud
     log "Добавляем ${DOMAIN} в trusted_domains Nextcloud..."
     /snap/bin/nextcloud.occ config:system:set trusted_domains 2 --value="${DOMAIN}" >> "${LOG_FILE}" 2>&1
+
+    # Принудительно включаем HTTPS и передаем пути
+    log "Прописываем сертификаты в конфигурацию Apache..."
+    /snap/bin/nextcloud.enable-https custom "${NEXTCLOUD_CERT_DIR}/cert.pem" "${NEXTCLOUD_CERT_DIR}/private.key" "${NEXTCLOUD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
     
     log "Перезапускаем Nextcloud..."
     snap restart nextcloud >> "${LOG_FILE}" 2>&1
