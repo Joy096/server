@@ -26,7 +26,6 @@ LOGD() { echo -e "   ${yellow}$* ${plain}"; }
 HOOK_SCRIPT_PATH="/root/renew_hook.sh"
 
 install_acme() {
-    # ... (код этой функции остается без изменений) ...
     echo ""
     LOGI "Обновление системы и установка зависимостей..."
     export DEBIAN_FRONTEND=noninteractive
@@ -51,11 +50,9 @@ install_acme() {
 }
 
 create_renew_hook() {
-    # ... (код этой функции остается без изменений) ...
     local domain=$1
     LOGI "Создаем/Обновляем универсальный hook-скрипт: ${HOOK_SCRIPT_PATH}"
     
-    # "Впекаем" домен прямо в скрипт, чтобы он не зависел от аргументов при автообновлении
     echo "#!/bin/bash" > "${HOOK_SCRIPT_PATH}"
     echo "DOMAIN=\"${domain}\"" >> "${HOOK_SCRIPT_PATH}"
     
@@ -78,6 +75,11 @@ if [ -d "/var/snap/nextcloud/" ]; then
     log "2. Обнаружен Nextcloud. Устанавливаем сертификат..."
     mkdir -p "${NEXTCLOUD_CERT_DIR}"
     /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --cert-file "${NEXTCLOUD_CERT_DIR}/cert.pem" --key-file "${NEXTCLOUD_CERT_DIR}/private.key" --fullchain-file "${NEXTCLOUD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
+    
+    # Добавляем новый домен в доверенные для Nextcloud
+    log "Добавляем ${DOMAIN} в trusted_domains Nextcloud..."
+    /snap/bin/nextcloud.occ config:system:set trusted_domains 2 --value="${DOMAIN}" >> "${LOG_FILE}" 2>&1
+    
     log "Перезапускаем Nextcloud..."
     snap restart nextcloud >> "${LOG_FILE}" 2>&1
 else
@@ -88,6 +90,15 @@ if [ -d "/var/snap/adguard-home/" ]; then
     log "3. Обнаружен AdGuard Home. Устанавливаем сертификат..."
     mkdir -p "${ADGUARD_CERT_DIR}"
     /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${ADGUARD_CERT_DIR}/private.key" --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
+    
+    # --- АВТОМАТИЧЕСКОЕ ИЗМЕНЕНИЕ ИМЕНИ СЕРВЕРА ---
+    AGH_CONFIG="/var/snap/adguard-home/current/AdGuardHome.yaml"
+    if [ -f "$AGH_CONFIG" ]; then
+        log "Прописываем новый домен в конфигурации AdGuard Home..."
+        sed -i "s/^[[:space:]]*server_name:.*/  server_name: ${DOMAIN}/" "$AGH_CONFIG"
+    fi
+    # ----------------------------------------------
+
     log "Перезапускаем AdGuard Home..."
     snap restart adguard-home >> "${LOG_FILE}" 2>&1
 else
@@ -110,33 +121,62 @@ EOF
 }
 
 ssl_cert_issue_and_deploy() {
-    # ... (код этой функции остается без изменений) ...
     install_acme || { LOGE "Прерывание из-за ошибки установки acme.sh"; exit 1; }
     echo ""
-    read -p "Введите ваш домен: " CF_Domain
-    echo -e "Введите Cloudflare Global API Key:"
-    read -r CF_GlobalKey
+    
+    echo "================================================================"
+    echo "       Выберите DNS-провайдера для выпуска сертификата:      "
+    echo "================================================================"
+    echo "1) Cloudflare (с поддержкой поддоменов *.domain)"
+    echo "2) DuckDNS (только основной домен)"
+    echo "================================================================"
+    read -p "Ваш выбор (1 или 2): " dns_choice
     echo ""
-    read -p "Введите ваш email, привязанный к Cloudflare: " CF_AccountEmail
-    export CF_Key="${CF_GlobalKey}"
-    export CF_Email="${CF_AccountEmail}"
 
-    create_renew_hook "${CF_Domain}"
+    if [ "$dns_choice" == "1" ]; then
+        DNS_PLUGIN="dns_cf"
+        read -p "Введите ваш домен (например, domain.pp.ua): " TARGET_DOMAIN
+        echo -e "Введите Cloudflare Global API Key:"
+        read -r CF_GlobalKey
+        read -p "Введите ваш email, привязанный к Cloudflare: " CF_AccountEmail
+        export CF_Key="${CF_GlobalKey}"
+        export CF_Email="${CF_AccountEmail}"
+    elif [ "$dns_choice" == "2" ]; then
+        DNS_PLUGIN="dns_duckdns"
+        read -p "Введите ваш домен DuckDNS (например, vitalik.duckdns.org): " TARGET_DOMAIN
+        echo -e "Введите ваш DuckDNS Token:"
+        read -r DUCK_Token
+        export DuckDNS_Token="${DUCK_Token}"
+    else
+        LOGE "Неверный выбор. Возврат в главное меню."
+        return
+    fi
 
-    LOGI "Запрашиваем сертификат для ${CF_Domain} и регистрируем hook..."
+    create_renew_hook "${TARGET_DOMAIN}"
+
+    LOGI "Запрашиваем сертификат для ${TARGET_DOMAIN} через ${DNS_PLUGIN}..."
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-    ~/.acme.sh/acme.sh --issue --dns dns_cf -d "${CF_Domain}" -d "*.${CF_Domain}" --ecc --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    if [[ $? -ne 0 ]]; then LOGE "Ошибка выпуска сертификата"; exit 1; fi
+    
+    # ИСПРАВЛЕНИЕ ДЛЯ DUCKDNS: убран флаг -d "*.domain"
+    if [ "$dns_choice" == "1" ]; then
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" -d "*.${TARGET_DOMAIN}" --ecc --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    else
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" --ecc --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    fi
+    
+    if [[ $? -ne 0 ]]; then 
+        LOGE "Ошибка выпуска сертификата"
+        exit 1
+    fi
     
     ~/.acme.sh/acme.sh --upgrade --auto-upgrade
 
     LOGI "Первичная установка сертификата во все обнаруженные службы..."
-    "${HOOK_SCRIPT_PATH}" "${CF_Domain}"
+    "${HOOK_SCRIPT_PATH}" "${TARGET_DOMAIN}"
     
     echo -e "\n✅ ${green}Готово! Сертификат выпущен и автоматически развернут.${plain}"
 }
 
-# --- НОВАЯ ФУНКЦИЯ ---
 sync_certificates() {
     LOGI "Синхронизация сертификатов с установленными приложениями..."
     CERT_BASE_DIR="/root/my_cert"
@@ -156,27 +196,38 @@ sync_certificates() {
         LOGE "Домен не найден. Убедитесь, что сертификат для этого домена был выпущен."
         return
     fi
+
+    echo ""
+    echo "Укажите провайдера, через которого был выпущен этот домен:"
+    echo "1) Cloudflare"
+    echo "2) DuckDNS"
+    read -p "Ваш выбор (1 или 2): " sync_dns_choice
+
+    if [ "$sync_dns_choice" == "1" ]; then
+        DNS_PLUGIN="dns_cf"
+    elif [ "$sync_dns_choice" == "2" ]; then
+        DNS_PLUGIN="dns_duckdns"
+    else
+        LOGE "Неверный выбор. Возврат в меню."
+        return
+    fi
     
-    # 1. Пересоздаем hook-скрипт
     create_renew_hook "$domain"
     
-    # 2. Принудительно перевыпускаем сертификат, чтобы ГАРАНТИРОВАННО обновить его конфигурацию.
-    LOGI "Обновляем конфигурацию acme.sh для домена ${domain} (может занять до минуты)..."
+    LOGI "Обновляем конфигурацию acme.sh для домена ${domain}..."
     
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: добавлен флаг --force ---
-    ~/.acme.sh/acme.sh --issue --dns dns_cf \
-        -d "${domain}" \
-        -d "*.${domain}" \
-        --ecc \
-        --force \
-        --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    # ИСПРАВЛЕНИЕ ДЛЯ DUCKDNS ПРИ ОБНОВЛЕНИИ
+    if [ "$sync_dns_choice" == "1" ]; then
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" -d "*.${domain}" --ecc --force --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    else
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" --ecc --force --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    fi
     
     if [[ $? -ne 0 ]]; then
         LOGE "Произошла ошибка при обновлении конфигурации сертификата."
         return
     fi
 
-    # 3. Запускаем hook немедленно, чтобы установить сертификаты
     LOGI "Запускаем развертывание сертификата для ${domain}..."
     "${HOOK_SCRIPT_PATH}" "$domain"
     
@@ -184,7 +235,6 @@ sync_certificates() {
 }
 
 remove_acme() {
-    # ... (код этой функции остается без изменений) ...
     LOGI "Начинаем удаление acme.sh..."
     if [ -f "$HOME/.acme.sh/acme.sh" ]; then
         ~/.acme.sh/acme.sh --uninstall
@@ -206,7 +256,6 @@ remove_acme() {
 }
 
 show_cert_path() {
-    # ... (код этой функции остается без изменений) ...
     CERT_BASE_DIR="/root/my_cert"
     if [[ ! -d "${CERT_BASE_DIR}" || -z "$(ls -A ${CERT_BASE_DIR})" ]]; then
         LOGE "Папка ${CERT_BASE_DIR} не найдена или пуста. Сначала выпустите сертификат (пункт 1)."
@@ -217,11 +266,10 @@ show_cert_path() {
     find "${CERT_BASE_DIR}" -type f -printf "   %p\n"
 }
 
-
 # --- ОБНОВЛЕННОЕ ГЛАВНОЕ МЕНЮ ---
 while true; do
     echo "================================================================"
-    echo "       Управление SSL сертификатами (метод Renew Hook)      "
+    echo "       Управление SSL сертификатами (Cloudflare & DuckDNS)      "
     echo "================================================================"
     echo "1. Установить/Перевыпустить сертификат (первый запуск)"
     echo "2. Синхронизировать сертификаты с приложениями (после установки нового ПО)"
