@@ -194,18 +194,36 @@ ssl_cert_issue_and_deploy() {
         read -p "Введите ваш email, привязанный к Cloudflare: " CF_AccountEmail
         export CF_Key="${CF_GlobalKey}"
         export CF_Email="${CF_AccountEmail}"
+        CHALLENGE_ALIAS=""
     elif [ "$dns_choice" == "2" ]; then
         DNS_PLUGIN="dns_duckdns"
         read -p "Введите ваш домен DuckDNS (например, vps.duckdns.org): " TARGET_DOMAIN
         echo -e "Введите ваш DuckDNS Token:"
         read -r DUCK_Token
         export DuckDNS_Token="${DUCK_Token}"
+        CHALLENGE_ALIAS=""
     elif [ "$dns_choice" == "3" ]; then
         DNS_PLUGIN="dns_desec"
-        read -p "Введите ваш домен deSEC (например, klymenko.dedyn.io): " TARGET_DOMAIN
+        read -p "Введите ваш домен deSEC (например, domain.dedyn.io или subdomain.domain.dedyn.io): " TARGET_DOMAIN
         echo -e "Введите ваш deSEC Token:"
         read -r DEDYN_TOKEN
         export DEDYN_TOKEN="${DEDYN_TOKEN}"
+
+        echo ""
+        echo "================================================================"
+        echo "   Это корневой домен или поддомен?                            "
+        echo "================================================================"
+        echo "1) Корневой домен (например domain.dedyn.io)"
+        echo "2) Поддомен (например subdomain.domain.dedyn.io) - использовать challenge-alias"
+        echo "================================================================"
+        read -p "Ваш выбор (1 или 2): " domain_type
+        echo ""
+
+        if [ "$domain_type" == "2" ]; then
+            read -p "Введите корневой домен для challenge-alias (например domain.dedyn.io): " CHALLENGE_ALIAS
+        else
+            CHALLENGE_ALIAS=""
+        fi
 
         # Очищаем все _acme-challenge записи перед выпуском
         cleanup_desec_txt "${TARGET_DOMAIN}" "${DEDYN_TOKEN}"
@@ -218,14 +236,31 @@ ssl_cert_issue_and_deploy() {
 
     LOGI "Запрашиваем сертификат для ${TARGET_DOMAIN} через ${DNS_PLUGIN}..."
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
-    
-    # Для DuckDNS запрашиваем один домен, для остальных (Cloudflare, deSEC) - с wildcard
+
+    # Формируем команду выпуска в зависимости от типа домена
     if [ "$dns_choice" == "2" ]; then
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" --ecc --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        # DuckDNS - без wildcard
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${TARGET_DOMAIN}" \
+            --ecc --dnssleep 60 \
+            --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    elif [ -n "$CHALLENGE_ALIAS" ]; then
+        # deSEC поддомен - с challenge-alias
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${TARGET_DOMAIN}" \
+            -d "*.${TARGET_DOMAIN}" \
+            --challenge-alias "${CHALLENGE_ALIAS}" \
+            --ecc --dnssleep 60 \
+            --renew-hook "${HOOK_SCRIPT_PATH}" --log
     else
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" -d "*.${TARGET_DOMAIN}" --ecc --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        # Cloudflare или deSEC корневой домен - с wildcard
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${TARGET_DOMAIN}" \
+            -d "*.${TARGET_DOMAIN}" \
+            --ecc --dnssleep 60 \
+            --renew-hook "${HOOK_SCRIPT_PATH}" --log
     fi
-    
+
     if [[ $? -ne 0 ]]; then 
         LOGE "Ошибка выпуска сертификата"
         exit 1
@@ -266,6 +301,8 @@ sync_certificates() {
     echo "3) deSEC"
     read -p "Ваш выбор (1, 2 или 3): " sync_dns_choice
 
+    CHALLENGE_ALIAS=""
+
     if [ "$sync_dns_choice" == "1" ]; then
         DNS_PLUGIN="dns_cf"
     elif [ "$sync_dns_choice" == "2" ]; then
@@ -275,6 +312,20 @@ sync_certificates() {
         echo -e "Введите ваш deSEC Token:"
         read -r DEDYN_TOKEN
         export DEDYN_TOKEN="${DEDYN_TOKEN}"
+
+        echo ""
+        echo "================================================================"
+        echo "   Это корневой домен или поддомен?                            "
+        echo "================================================================"
+        echo "1) Корневой домен (например domain.dedyn.io)"
+        echo "2) Поддомен (например subdomain.domain.dedyn.io) - использовать challenge-alias"
+        echo "================================================================"
+        read -p "Ваш выбор (1 или 2): " domain_type
+        echo ""
+
+        if [ "$domain_type" == "2" ]; then
+            read -p "Введите корневой домен для challenge-alias (например domain.dedyn.io): " CHALLENGE_ALIAS
+        fi
 
         # Очищаем все _acme-challenge записи перед перевыпуском
         cleanup_desec_txt "${domain}" "${DEDYN_TOKEN}"
@@ -286,12 +337,28 @@ sync_certificates() {
     create_renew_hook "$domain"
     
     LOGI "Обновляем конфигурацию acme.sh для домена ${domain}..."
-    
-    # Для DuckDNS без wildcard, для остальных с wildcard
+
     if [ "$sync_dns_choice" == "2" ]; then
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" --ecc --force --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        # DuckDNS - без wildcard
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${domain}" \
+            --ecc --force --dnssleep 60 \
+            --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    elif [ -n "$CHALLENGE_ALIAS" ]; then
+        # deSEC поддомен - с challenge-alias
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${domain}" \
+            -d "*.${domain}" \
+            --challenge-alias "${CHALLENGE_ALIAS}" \
+            --ecc --force --dnssleep 60 \
+            --renew-hook "${HOOK_SCRIPT_PATH}" --log
     else
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" -d "*.${domain}" --ecc --force --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        # Cloudflare или deSEC корневой домен - с wildcard
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${domain}" \
+            -d "*.${domain}" \
+            --ecc --force --dnssleep 60 \
+            --renew-hook "${HOOK_SCRIPT_PATH}" --log
     fi
     
     if [[ $? -ne 0 ]]; then
