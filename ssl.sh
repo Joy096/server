@@ -156,8 +156,8 @@ ssl_cert_issue_and_deploy() {
         DNS_PLUGIN="dns_desec"
         read -p "Введите ваш домен deSEC (например, arm.vitalik.dedyn.io): " TARGET_DOMAIN
         echo -e "Введите ваш deSEC Token:"
-        read -r DEDYN_Token
-        export DEDYN_Token="${DEDYN_Token}"
+        read -r DEDYN_TOKEN
+        export DEDYN_TOKEN="${DEDYN_TOKEN}"
     else
         LOGE "Неверный выбор. Возврат в главное меню."
         return
