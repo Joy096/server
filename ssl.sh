@@ -54,7 +54,6 @@ cleanup_desec_txt() {
     local target_domain=$1
     local token=$2
 
-    # Определяем корневую зону (например из adguard.klymenko.dedyn.io берём klymenko.dedyn.io)
     local root_domain
     root_domain=$(curl -s \
         -H "Authorization: Token ${token}" \
@@ -76,7 +75,6 @@ cleanup_desec_txt() {
 
     LOGI "Очищаем все TXT-записи _acme-challenge в deSEC для зоны ${root_domain}..."
 
-    # Получаем список всех subname начинающихся на _acme-challenge
     local rrsets
     rrsets=$(curl -s \
         -H "Authorization: Token ${token}" \
@@ -90,7 +88,7 @@ cleanup_desec_txt() {
     fi
 
     while IFS= read -r subname; do
-        LOGD "Удаляем запись: ${subname}.${root_domain}"
+        LOGD "Удаляем TXT запись: ${subname}.${root_domain}"
         curl -s -X DELETE \
             -H "Authorization: Token ${token}" \
             "https://desec.io/api/v1/domains/${root_domain}/rrsets/${subname}/TXT/" \
@@ -99,6 +97,49 @@ cleanup_desec_txt() {
 
     sleep 2
     LOGI "Очистка завершена."
+}
+
+# --- Создание CNAME для challenge-alias если её ещё нет ---
+ensure_desec_challenge_cname() {
+    local subdomain=$1       # например adguard.klymenko.dedyn.io
+    local root_domain=$2     # например klymenko.dedyn.io
+    local token=$3
+
+    # Вычисляем subname поддомена (например "adguard" из "adguard.klymenko.dedyn.io")
+    local sub_part="${subdomain%.${root_domain}}"
+    local cname_subname="_acme-challenge.${sub_part}"
+    local cname_value="_acme-challenge.${root_domain}."
+
+    LOGI "Проверяем наличие CNAME записи ${cname_subname}.${root_domain} → ${cname_value}..."
+
+    # Проверяем существует ли уже такая CNAME
+    local response
+    response=$(curl -s \
+        -H "Authorization: Token ${token}" \
+        "https://desec.io/api/v1/domains/${root_domain}/rrsets/${cname_subname}/CNAME/")
+
+    if echo "$response" | grep -q '"records":\["'; then
+        LOGI "CNAME запись уже существует, пропускаем."
+        return 0
+    fi
+
+    LOGI "Создаём CNAME запись: ${cname_subname}.${root_domain} → ${cname_value}"
+    local create_response
+    create_response=$(curl -s -X POST \
+        -H "Authorization: Token ${token}" \
+        -H "Content-Type: application/json" \
+        -d "[{\"subname\":\"${cname_subname}\", \"type\":\"CNAME\", \"records\":[\"${cname_value}\"], \"ttl\":3600}]" \
+        "https://desec.io/api/v1/domains/${root_domain}/rrsets/")
+
+    if echo "$create_response" | grep -q '"subname"'; then
+        LOGI "CNAME запись успешно создана."
+    else
+        LOGE "Ошибка создания CNAME записи. Ответ: ${create_response}"
+        LOGE "Создайте запись вручную в панели deSEC:"
+        LOGE "  Type: CNAME"
+        LOGE "  Subname: ${cname_subname}"
+        LOGE "  Value: ${cname_value}"
+    fi
 }
 
 create_renew_hook() {
@@ -186,6 +227,8 @@ ssl_cert_issue_and_deploy() {
     read -p "Ваш выбор (1, 2 или 3): " dns_choice
     echo ""
 
+    CHALLENGE_ALIAS=""
+
     if [ "$dns_choice" == "1" ]; then
         DNS_PLUGIN="dns_cf"
         read -p "Введите ваш домен (например, domain.pp.ua): " TARGET_DOMAIN
@@ -194,14 +237,12 @@ ssl_cert_issue_and_deploy() {
         read -p "Введите ваш email, привязанный к Cloudflare: " CF_AccountEmail
         export CF_Key="${CF_GlobalKey}"
         export CF_Email="${CF_AccountEmail}"
-        CHALLENGE_ALIAS=""
     elif [ "$dns_choice" == "2" ]; then
         DNS_PLUGIN="dns_duckdns"
         read -p "Введите ваш домен DuckDNS (например, vps.duckdns.org): " TARGET_DOMAIN
         echo -e "Введите ваш DuckDNS Token:"
         read -r DUCK_Token
         export DuckDNS_Token="${DUCK_Token}"
-        CHALLENGE_ALIAS=""
     elif [ "$dns_choice" == "3" ]; then
         DNS_PLUGIN="dns_desec"
         read -p "Введите ваш домен deSEC (например, domain.dedyn.io или subdomain.domain.dedyn.io): " TARGET_DOMAIN
@@ -221,11 +262,11 @@ ssl_cert_issue_and_deploy() {
 
         if [ "$domain_type" == "2" ]; then
             read -p "Введите корневой домен для challenge-alias (например domain.dedyn.io): " CHALLENGE_ALIAS
-        else
-            CHALLENGE_ALIAS=""
+            # Автоматически создаём CNAME если её ещё нет
+            ensure_desec_challenge_cname "${TARGET_DOMAIN}" "${CHALLENGE_ALIAS}" "${DEDYN_TOKEN}"
         fi
 
-        # Очищаем все _acme-challenge записи перед выпуском
+        # Очищаем все _acme-challenge TXT-записи перед выпуском
         cleanup_desec_txt "${TARGET_DOMAIN}" "${DEDYN_TOKEN}"
     else
         LOGE "Неверный выбор. Возврат в главное меню."
@@ -237,7 +278,6 @@ ssl_cert_issue_and_deploy() {
     LOGI "Запрашиваем сертификат для ${TARGET_DOMAIN} через ${DNS_PLUGIN}..."
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 
-    # Формируем команду выпуска в зависимости от типа домена
     if [ "$dns_choice" == "2" ]; then
         # DuckDNS - без wildcard
         ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
@@ -325,9 +365,11 @@ sync_certificates() {
 
         if [ "$domain_type" == "2" ]; then
             read -p "Введите корневой домен для challenge-alias (например domain.dedyn.io): " CHALLENGE_ALIAS
+            # Автоматически создаём CNAME если её ещё нет
+            ensure_desec_challenge_cname "${domain}" "${CHALLENGE_ALIAS}" "${DEDYN_TOKEN}"
         fi
 
-        # Очищаем все _acme-challenge записи перед перевыпуском
+        # Очищаем все _acme-challenge TXT-записи перед перевыпуском
         cleanup_desec_txt "${domain}" "${DEDYN_TOKEN}"
     else
         LOGE "Неверный выбор. Возврат в меню."
