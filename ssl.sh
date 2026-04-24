@@ -221,9 +221,9 @@ ssl_cert_issue_and_deploy() {
     
     # Для DuckDNS запрашиваем один домен, для остальных (Cloudflare, deSEC) - с wildcard
     if [ "$dns_choice" == "2" ]; then
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" --ecc --dnssleep 60 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" --ecc --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
     else
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" -d "*.${TARGET_DOMAIN}" --ecc --dnssleep 60 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" -d "*.${TARGET_DOMAIN}" --ecc --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
     fi
     
     if [[ $? -ne 0 ]]; then 
@@ -289,9 +289,9 @@ sync_certificates() {
     
     # Для DuckDNS без wildcard, для остальных с wildcard
     if [ "$sync_dns_choice" == "2" ]; then
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" --ecc --force --dnssleep 60 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" --ecc --force --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
     else
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" -d "*.${domain}" --ecc --force --dnssleep 60 --renew-hook "${HOOK_SCRIPT_PATH}" --log
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" -d "*.${domain}" --ecc --force --dnssleep 120 --renew-hook "${HOOK_SCRIPT_PATH}" --log
     fi
     
     if [[ $? -ne 0 ]]; then
