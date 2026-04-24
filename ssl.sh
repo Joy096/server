@@ -49,6 +49,58 @@ install_acme() {
     return 0
 }
 
+# --- Очистка ВСЕХ TXT-записей _acme-challenge в зоне deSEC ---
+cleanup_desec_txt() {
+    local target_domain=$1
+    local token=$2
+
+    # Определяем корневую зону (например из adguard.klymenko.dedyn.io берём klymenko.dedyn.io)
+    local root_domain
+    root_domain=$(curl -s \
+        -H "Authorization: Token ${token}" \
+        "https://desec.io/api/v1/domains/" | \
+        grep -o '"name":"[^"]*"' | \
+        grep -o '"[^"]*"$' | \
+        tr -d '"' | \
+        while read -r d; do
+            if [[ "$target_domain" == "$d" || "$target_domain" == *".$d" ]]; then
+                echo "$d"
+                break
+            fi
+        done)
+
+    if [[ -z "$root_domain" ]]; then
+        LOGD "Не удалось определить корневую зону для ${target_domain}, пропускаем очистку."
+        return
+    fi
+
+    LOGI "Очищаем все TXT-записи _acme-challenge в deSEC для зоны ${root_domain}..."
+
+    # Получаем список всех subname начинающихся на _acme-challenge
+    local rrsets
+    rrsets=$(curl -s \
+        -H "Authorization: Token ${token}" \
+        "https://desec.io/api/v1/domains/${root_domain}/rrsets/" | \
+        grep -o '"subname":"_acme-challenge[^"]*"' | \
+        grep -o '_acme-challenge[^"]*')
+
+    if [[ -z "$rrsets" ]]; then
+        LOGD "Записей _acme-challenge не найдено, очистка не требуется."
+        return
+    fi
+
+    while IFS= read -r subname; do
+        LOGD "Удаляем запись: ${subname}.${root_domain}"
+        curl -s -X DELETE \
+            -H "Authorization: Token ${token}" \
+            "https://desec.io/api/v1/domains/${root_domain}/rrsets/${subname}/TXT/" \
+            >/dev/null 2>&1
+    done <<< "$rrsets"
+
+    sleep 2
+    LOGI "Очистка завершена."
+}
+
 create_renew_hook() {
     local domain=$1
     LOGI "Создаем/Обновляем универсальный hook-скрипт: ${HOOK_SCRIPT_PATH}"
@@ -76,11 +128,9 @@ if [ -d "/var/snap/nextcloud/" ]; then
     mkdir -p "${NEXTCLOUD_CERT_DIR}"
     /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --cert-file "${NEXTCLOUD_CERT_DIR}/cert.pem" --key-file "${NEXTCLOUD_CERT_DIR}/private.key" --fullchain-file "${NEXTCLOUD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
     
-    # Добавляем новый домен в доверенные для Nextcloud
     log "Добавляем ${DOMAIN} в trusted_domains Nextcloud..."
     /snap/bin/nextcloud.occ config:system:set trusted_domains 1 --value="${DOMAIN}" >> "${LOG_FILE}" 2>&1
 
-    # Принудительно включаем HTTPS и передаем пути
     log "Прописываем сертификаты в конфигурацию Apache..."
     /snap/bin/nextcloud.enable-https custom "${NEXTCLOUD_CERT_DIR}/cert.pem" "${NEXTCLOUD_CERT_DIR}/private.key" "${NEXTCLOUD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
     
@@ -95,13 +145,11 @@ if [ -d "/var/snap/adguard-home/" ]; then
     mkdir -p "${ADGUARD_CERT_DIR}"
     /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${ADGUARD_CERT_DIR}/private.key" --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
     
-    # --- АВТОМАТИЧЕСКОЕ ИЗМЕНЕНИЕ ИМЕНИ СЕРВЕРА ---
     AGH_CONFIG="/var/snap/adguard-home/current/AdGuardHome.yaml"
     if [ -f "$AGH_CONFIG" ]; then
         log "Прописываем новый домен в конфигурации AdGuard Home..."
         sed -i "s/^[[:space:]]*server_name:.*/  server_name: ${DOMAIN}/" "$AGH_CONFIG"
     fi
-    # ----------------------------------------------
 
     log "Перезапускаем AdGuard Home..."
     snap restart adguard-home >> "${LOG_FILE}" 2>&1
@@ -154,10 +202,13 @@ ssl_cert_issue_and_deploy() {
         export DuckDNS_Token="${DUCK_Token}"
     elif [ "$dns_choice" == "3" ]; then
         DNS_PLUGIN="dns_desec"
-        read -p "Введите ваш домен deSEC (например, arm.vitalik.dedyn.io): " TARGET_DOMAIN
+        read -p "Введите ваш домен deSEC (например, klymenko.dedyn.io): " TARGET_DOMAIN
         echo -e "Введите ваш deSEC Token:"
         read -r DEDYN_TOKEN
         export DEDYN_TOKEN="${DEDYN_TOKEN}"
+
+        # Очищаем все _acme-challenge записи перед выпуском
+        cleanup_desec_txt "${TARGET_DOMAIN}" "${DEDYN_TOKEN}"
     else
         LOGE "Неверный выбор. Возврат в главное меню."
         return
@@ -221,6 +272,12 @@ sync_certificates() {
         DNS_PLUGIN="dns_duckdns"
     elif [ "$sync_dns_choice" == "3" ]; then
         DNS_PLUGIN="dns_desec"
+        echo -e "Введите ваш deSEC Token:"
+        read -r DEDYN_TOKEN
+        export DEDYN_TOKEN="${DEDYN_TOKEN}"
+
+        # Очищаем все _acme-challenge записи перед перевыпуском
+        cleanup_desec_txt "${domain}" "${DEDYN_TOKEN}"
     else
         LOGE "Неверный выбор. Возврат в меню."
         return
@@ -280,7 +337,7 @@ show_cert_path() {
     find "${CERT_BASE_DIR}" -type f -printf "   %p\n"
 }
 
-# --- ОБНОВЛЕННОЕ ГЛАВНОЕ МЕНЮ ---
+# --- ГЛАВНОЕ МЕНЮ ---
 while true; do
     echo "================================================================"
     echo "   Управление SSL сертификатами (Cloudflare, DuckDNS, deSEC)  "
