@@ -133,8 +133,9 @@ ssl_cert_issue_and_deploy() {
     echo "================================================================"
     echo "1) Cloudflare (с поддержкой поддоменов *.domain)"
     echo "2) DuckDNS (только основной домен)"
+    echo "3) deSEC (с поддержкой поддоменов *.domain)"
     echo "================================================================"
-    read -p "Ваш выбор (1 или 2): " dns_choice
+    read -p "Ваш выбор (1, 2 или 3): " dns_choice
     echo ""
 
     if [ "$dns_choice" == "1" ]; then
@@ -147,10 +148,16 @@ ssl_cert_issue_and_deploy() {
         export CF_Email="${CF_AccountEmail}"
     elif [ "$dns_choice" == "2" ]; then
         DNS_PLUGIN="dns_duckdns"
-        read -p "Введите ваш домен DuckDNS (например, vitalik.duckdns.org): " TARGET_DOMAIN
+        read -p "Введите ваш домен DuckDNS (например, vps.duckdns.org): " TARGET_DOMAIN
         echo -e "Введите ваш DuckDNS Token:"
         read -r DUCK_Token
         export DuckDNS_Token="${DUCK_Token}"
+    elif [ "$dns_choice" == "3" ]; then
+        DNS_PLUGIN="dns_desec"
+        read -p "Введите ваш домен deSEC (например, arm.vitalik.dedyn.io): " TARGET_DOMAIN
+        echo -e "Введите ваш deSEC Token:"
+        read -r DEDYN_Token
+        export DEDYN_Token="${DEDYN_Token}"
     else
         LOGE "Неверный выбор. Возврат в главное меню."
         return
@@ -161,11 +168,11 @@ ssl_cert_issue_and_deploy() {
     LOGI "Запрашиваем сертификат для ${TARGET_DOMAIN} через ${DNS_PLUGIN}..."
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
     
-    # ИСПРАВЛЕНИЕ ДЛЯ DUCKDNS: убран флаг -d "*.domain"
-    if [ "$dns_choice" == "1" ]; then
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" -d "*.${TARGET_DOMAIN}" --ecc --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    else
+    # Для DuckDNS запрашиваем один домен, для остальных (Cloudflare, deSEC) - с wildcard
+    if [ "$dns_choice" == "2" ]; then
         ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" --ecc --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    else
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${TARGET_DOMAIN}" -d "*.${TARGET_DOMAIN}" --ecc --renew-hook "${HOOK_SCRIPT_PATH}" --log
     fi
     
     if [[ $? -ne 0 ]]; then 
@@ -205,12 +212,15 @@ sync_certificates() {
     echo "Укажите провайдера, через которого был выпущен этот домен:"
     echo "1) Cloudflare"
     echo "2) DuckDNS"
-    read -p "Ваш выбор (1 или 2): " sync_dns_choice
+    echo "3) deSEC"
+    read -p "Ваш выбор (1, 2 или 3): " sync_dns_choice
 
     if [ "$sync_dns_choice" == "1" ]; then
         DNS_PLUGIN="dns_cf"
     elif [ "$sync_dns_choice" == "2" ]; then
         DNS_PLUGIN="dns_duckdns"
+    elif [ "$sync_dns_choice" == "3" ]; then
+        DNS_PLUGIN="dns_desec"
     else
         LOGE "Неверный выбор. Возврат в меню."
         return
@@ -220,11 +230,11 @@ sync_certificates() {
     
     LOGI "Обновляем конфигурацию acme.sh для домена ${domain}..."
     
-    # ИСПРАВЛЕНИЕ ДЛЯ DUCKDNS ПРИ ОБНОВЛЕНИИ
-    if [ "$sync_dns_choice" == "1" ]; then
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" -d "*.${domain}" --ecc --force --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    else
+    # Для DuckDNS без wildcard, для остальных с wildcard
+    if [ "$sync_dns_choice" == "2" ]; then
         ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" --ecc --force --renew-hook "${HOOK_SCRIPT_PATH}" --log
+    else
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" -d "${domain}" -d "*.${domain}" --ecc --force --renew-hook "${HOOK_SCRIPT_PATH}" --log
     fi
     
     if [[ $? -ne 0 ]]; then
@@ -273,7 +283,7 @@ show_cert_path() {
 # --- ОБНОВЛЕННОЕ ГЛАВНОЕ МЕНЮ ---
 while true; do
     echo "================================================================"
-    echo "       Управление SSL сертификатами (Cloudflare & DuckDNS)      "
+    echo "   Управление SSL сертификатами (Cloudflare, DuckDNS, deSEC)  "
     echo "================================================================"
     echo "1. Установить/Перевыпустить сертификат (первый запуск)"
     echo "2. Синхронизировать сертификаты с приложениями (после установки нового ПО)"
