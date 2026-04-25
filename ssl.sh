@@ -99,20 +99,18 @@ cleanup_desec_txt() {
     LOGI "Очистка завершена."
 }
 
-# --- Создание CNAME для challenge-alias если её ещё нет ---
+# --- Создание CNAME для challenge-alias если её ещё нет (deSEC) ---
 ensure_desec_challenge_cname() {
-    local subdomain=$1       # например adguard.klymenko.dedyn.io
-    local root_domain=$2     # например klymenko.dedyn.io
+    local subdomain=$1
+    local root_domain=$2
     local token=$3
 
-    # Вычисляем subname поддомена (например "adguard" из "adguard.klymenko.dedyn.io")
     local sub_part="${subdomain%.${root_domain}}"
     local cname_subname="_acme-challenge.${sub_part}"
     local cname_value="_acme-challenge.${root_domain}."
 
     LOGI "Проверяем наличие CNAME записи ${cname_subname}.${root_domain} → ${cname_value}..."
 
-    # Проверяем существует ли уже такая CNAME
     local response
     response=$(curl -s \
         -H "Authorization: Token ${token}" \
@@ -213,9 +211,9 @@ EOF
     LOGI "Hook-скрипт успешно создан/обновлен."
 }
 
-ssl_cert_issue_and_deploy() {
-    install_acme || { LOGE "Прерывание из-за ошибки установки acme.sh"; exit 1; }
-    echo ""
+# --- Выбор провайдера и получение credentials ---
+select_dns_provider() {
+    local mode=$1  # "issue" или "sync"
     
     echo "================================================================"
     echo "       Выберите DNS-провайдера для выпуска сертификата:      "
@@ -223,8 +221,9 @@ ssl_cert_issue_and_deploy() {
     echo "1) Cloudflare (с поддержкой поддоменов *.domain)"
     echo "2) DuckDNS (только основной домен)"
     echo "3) deSEC (с поддержкой поддоменов *.domain)"
+    echo "4) Dynu (с поддержкой поддоменов *.domain)"
     echo "================================================================"
-    read -p "Ваш выбор (1, 2 или 3): " dns_choice
+    read -p "Ваш выбор (1, 2, 3 или 4): " dns_choice
     echo ""
 
     CHALLENGE_ALIAS=""
@@ -237,12 +236,14 @@ ssl_cert_issue_and_deploy() {
         read -p "Введите ваш email, привязанный к Cloudflare: " CF_AccountEmail
         export CF_Key="${CF_GlobalKey}"
         export CF_Email="${CF_AccountEmail}"
+
     elif [ "$dns_choice" == "2" ]; then
         DNS_PLUGIN="dns_duckdns"
         read -p "Введите ваш домен DuckDNS (например, vps.duckdns.org): " TARGET_DOMAIN
         echo -e "Введите ваш DuckDNS Token:"
         read -r DUCK_Token
         export DuckDNS_Token="${DUCK_Token}"
+
     elif [ "$dns_choice" == "3" ]; then
         DNS_PLUGIN="dns_desec"
         read -p "Введите ваш домен deSEC (например, domain.dedyn.io или subdomain.domain.dedyn.io): " TARGET_DOMAIN
@@ -262,44 +263,74 @@ ssl_cert_issue_and_deploy() {
 
         if [ "$domain_type" == "2" ]; then
             read -p "Введите корневой домен для challenge-alias (например domain.dedyn.io): " CHALLENGE_ALIAS
-            # Автоматически создаём CNAME если её ещё нет
             ensure_desec_challenge_cname "${TARGET_DOMAIN}" "${CHALLENGE_ALIAS}" "${DEDYN_TOKEN}"
         fi
 
-        # Очищаем все _acme-challenge TXT-записи перед выпуском
         cleanup_desec_txt "${TARGET_DOMAIN}" "${DEDYN_TOKEN}"
+
+    elif [ "$dns_choice" == "4" ]; then
+        DNS_PLUGIN="dns_dynu"
+        read -p "Введите ваш домен Dynu (например, vps.dynu.net): " TARGET_DOMAIN
+        echo -e "Введите ваш Dynu Client ID (OAuth2):"
+        read -r DYNU_CLIENT_ID
+        echo -e "Введите ваш Dynu Secret (OAuth2):"
+        read -r DYNU_SECRET
+        export Dynu_ClientId="${DYNU_CLIENT_ID}"
+        export Dynu_Secret="${DYNU_SECRET}"
+
     else
         LOGE "Неверный выбор. Возврат в главное меню."
-        return
+        return 1
     fi
+
+    return 0
+}
+
+# --- Формирование команды выпуска сертификата ---
+issue_certificate() {
+    local domain=$1
+    local renew_hook=$2
+    local force_flag=$3  # "--force" или пусто
+
+    if [ "$dns_choice" == "2" ]; then
+        # DuckDNS - без wildcard
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${domain}" \
+            --ecc --dnssleep 60 \
+            ${force_flag} \
+            --renew-hook "${renew_hook}" --log
+    elif [ -n "$CHALLENGE_ALIAS" ]; then
+        # deSEC поддомен - с challenge-alias
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${domain}" \
+            -d "*.${domain}" \
+            --challenge-alias "${CHALLENGE_ALIAS}" \
+            --ecc --dnssleep 60 \
+            ${force_flag} \
+            --renew-hook "${renew_hook}" --log
+    else
+        # Cloudflare, deSEC корневой, Dynu - с wildcard
+        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
+            -d "${domain}" \
+            -d "*.${domain}" \
+            --ecc --dnssleep 60 \
+            ${force_flag} \
+            --renew-hook "${renew_hook}" --log
+    fi
+}
+
+ssl_cert_issue_and_deploy() {
+    install_acme || { LOGE "Прерывание из-за ошибки установки acme.sh"; exit 1; }
+    echo ""
+
+    select_dns_provider "issue" || return
 
     create_renew_hook "${TARGET_DOMAIN}"
 
     LOGI "Запрашиваем сертификат для ${TARGET_DOMAIN} через ${DNS_PLUGIN}..."
     ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
 
-    if [ "$dns_choice" == "2" ]; then
-        # DuckDNS - без wildcard
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
-            -d "${TARGET_DOMAIN}" \
-            --ecc --dnssleep 60 \
-            --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    elif [ -n "$CHALLENGE_ALIAS" ]; then
-        # deSEC поддомен - с challenge-alias
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
-            -d "${TARGET_DOMAIN}" \
-            -d "*.${TARGET_DOMAIN}" \
-            --challenge-alias "${CHALLENGE_ALIAS}" \
-            --ecc --dnssleep 60 \
-            --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    else
-        # Cloudflare или deSEC корневой домен - с wildcard
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
-            -d "${TARGET_DOMAIN}" \
-            -d "*.${TARGET_DOMAIN}" \
-            --ecc --dnssleep 60 \
-            --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    fi
+    issue_certificate "${TARGET_DOMAIN}" "${HOOK_SCRIPT_PATH}" ""
 
     if [[ $? -ne 0 ]]; then 
         LOGE "Ошибка выпуска сертификата"
@@ -335,74 +366,16 @@ sync_certificates() {
     fi
 
     echo ""
-    echo "Укажите провайдера, через которого был выпущен этот домен:"
-    echo "1) Cloudflare"
-    echo "2) DuckDNS"
-    echo "3) deSEC"
-    read -p "Ваш выбор (1, 2 или 3): " sync_dns_choice
+    TARGET_DOMAIN="$domain"
 
-    CHALLENGE_ALIAS=""
+    select_dns_provider "sync" || return
 
-    if [ "$sync_dns_choice" == "1" ]; then
-        DNS_PLUGIN="dns_cf"
-    elif [ "$sync_dns_choice" == "2" ]; then
-        DNS_PLUGIN="dns_duckdns"
-    elif [ "$sync_dns_choice" == "3" ]; then
-        DNS_PLUGIN="dns_desec"
-        echo -e "Введите ваш deSEC Token:"
-        read -r DEDYN_TOKEN
-        export DEDYN_TOKEN="${DEDYN_TOKEN}"
-
-        echo ""
-        echo "================================================================"
-        echo "   Это корневой домен или поддомен?                            "
-        echo "================================================================"
-        echo "1) Корневой домен (например domain.dedyn.io)"
-        echo "2) Поддомен (например subdomain.domain.dedyn.io) - использовать challenge-alias"
-        echo "================================================================"
-        read -p "Ваш выбор (1 или 2): " domain_type
-        echo ""
-
-        if [ "$domain_type" == "2" ]; then
-            read -p "Введите корневой домен для challenge-alias (например domain.dedyn.io): " CHALLENGE_ALIAS
-            # Автоматически создаём CNAME если её ещё нет
-            ensure_desec_challenge_cname "${domain}" "${CHALLENGE_ALIAS}" "${DEDYN_TOKEN}"
-        fi
-
-        # Очищаем все _acme-challenge TXT-записи перед перевыпуском
-        cleanup_desec_txt "${domain}" "${DEDYN_TOKEN}"
-    else
-        LOGE "Неверный выбор. Возврат в меню."
-        return
-    fi
-    
     create_renew_hook "$domain"
     
     LOGI "Обновляем конфигурацию acme.sh для домена ${domain}..."
 
-    if [ "$sync_dns_choice" == "2" ]; then
-        # DuckDNS - без wildcard
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
-            -d "${domain}" \
-            --ecc --force --dnssleep 60 \
-            --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    elif [ -n "$CHALLENGE_ALIAS" ]; then
-        # deSEC поддомен - с challenge-alias
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
-            -d "${domain}" \
-            -d "*.${domain}" \
-            --challenge-alias "${CHALLENGE_ALIAS}" \
-            --ecc --force --dnssleep 60 \
-            --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    else
-        # Cloudflare или deSEC корневой домен - с wildcard
-        ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
-            -d "${domain}" \
-            -d "*.${domain}" \
-            --ecc --force --dnssleep 60 \
-            --renew-hook "${HOOK_SCRIPT_PATH}" --log
-    fi
-    
+    issue_certificate "${domain}" "${HOOK_SCRIPT_PATH}" "--force"
+
     if [[ $? -ne 0 ]]; then
         LOGE "Произошла ошибка при обновлении конфигурации сертификата."
         return
@@ -449,9 +422,9 @@ show_cert_path() {
 # --- ГЛАВНОЕ МЕНЮ ---
 while true; do
     echo "================================================================"
-    echo "   Управление SSL сертификатами (Cloudflare, DuckDNS, deSEC)  "
+    echo " Управление SSL сертификатами (Cloudflare, DuckDNS, deSEC, Dynu)"
     echo "================================================================"
-    echo "1. Установить/Перевыпустить сертификат (первый запуск)"
+    echo "1. Установить/Перевыпустить сертификат"
     echo "2. Синхронизировать сертификаты с приложениями (после установки нового ПО)"
     echo "3. Показать путь к файлам сертификата"
     echo "4. Полностью удалить acme.sh, сертификаты и все настройки"
