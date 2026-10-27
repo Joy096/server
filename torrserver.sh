@@ -1,4 +1,16 @@
 #!/bin/bash
+
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
+if [[ $EUID -ne 0 ]]; then
+    echo "❌ Этот скрипт должен выполняться от root!"
+    exit 1
+fi
+
 # torrserver_full.sh - TorrServer + любой WireGuard VPN для ЧИСТОЙ установки на Ubuntu (Oracle Cloud)
 #
 # Работает с любым провайдером, который выдаёт конфиг WireGuard (ClearVPN, Mullvad, Proton и т.д.).
