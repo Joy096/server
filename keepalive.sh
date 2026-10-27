@@ -1,4 +1,11 @@
 #!/bin/bash
+
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
 # =====================================================================
 #  keepalive_full: защита Always Free сервера Oracle от отключения за простой
 #  Запуск:  sudo bash keepalive_full.sh      (на самом сервере Oracle)
