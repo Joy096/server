@@ -1,4 +1,16 @@
 #!/bin/bash
+
+# Получаем реальный путь к скрипту
+SCRIPT_PATH=$(realpath "$0")
+
+# Удаляем скрипт после завершения
+trap 'rm -f "$SCRIPT_PATH"' EXIT
+
+if [[ $EUID -ne 0 ]]; then
+    echo "❌ Этот скрипт должен выполняться от root!"
+    exit 1
+fi
+
 # qbittorrent_full.sh - qBittorrent-nox + WireGuard VPN + kill-switch для Ubuntu (Oracle Cloud)
 #
 # Схема та же, что в torrserver_full.sh для TorrServer: через VPN идёт ТОЛЬКО трафик пользователя
