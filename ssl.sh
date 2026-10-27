@@ -1,21 +1,7 @@
-#!/bin/bash
-
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
-
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
-
-# Проверка на root
-if [[ $EUID -ne 0 ]]; then
-    echo "❌ Этот скрипт должен выполняться от root!"
-    exit 1
-fi
-
 # Цвета для сообщений
 green='\033[0;32m'
 red='\033[0;31m'
-yellow='\033[0;33m'
+yellow='\033[1;33m'
 plain='\033[0m'
 
 LOGI() { echo -e "✅ ${green}$* ${plain}"; }
@@ -24,6 +10,7 @@ LOGD() { echo -e "   ${yellow}$* ${plain}"; }
 
 # --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
 HOOK_SCRIPT_PATH="/root/renew_hook.sh"
+CERT_BASE_DIR="/root/my_cert"
 
 install_acme() {
     echo ""
@@ -205,6 +192,193 @@ else
     log "4. 3X-UI не найден, пропускаем."
 fi
 
+if [ -f "/etc/systemd/system/qbittorrent.service" ] && id -u qbittorrent >/dev/null 2>&1; then
+    log "5. Обнаружен qBittorrent. Устанавливаем сертификат и включаем HTTPS..."
+    QB_CERT_DIR="/etc/qbittorrent-cert"
+    QB_CONF="/home/qbittorrent/.config/qBittorrent/qBittorrent.conf"
+    mkdir -p "${QB_CERT_DIR}"
+    # Копия сертификата именно для qBittorrent: он работает от своего пользователя, а в /root у него доступа нет
+    /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${QB_CERT_DIR}/private.key" --fullchain-file "${QB_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
+    if [ -s "${QB_CERT_DIR}/fullchain.pem" ] && [ -s "${QB_CERT_DIR}/private.key" ]; then
+        echo "${DOMAIN}" > "${QB_CERT_DIR}/domain"
+        chown -R qbittorrent:qbittorrent "${QB_CERT_DIR}"
+        chmod 700 "${QB_CERT_DIR}"
+        chmod 600 "${QB_CERT_DIR}/private.key"
+        chmod 644 "${QB_CERT_DIR}/fullchain.pem" "${QB_CERT_DIR}/domain"
+
+        # Ключ в секции [Preferences] (старая строка заменяется). Ключ передаётся как в файле: WebUI\HTTPS\Enabled
+        qb_set() {
+            KEY="$1" VAL="$2" awk '
+                BEGIN { prefix = ENVIRON["KEY"] "=" }
+                index($0, prefix) == 1 { next }
+                { print }
+                /^\[Preferences\]/ { print ENVIRON["KEY"] "=" ENVIRON["VAL"] }
+            ' "${QB_CONF}" > "${QB_CONF}.tmp" && cat "${QB_CONF}.tmp" > "${QB_CONF}"
+            rm -f "${QB_CONF}.tmp"
+        }
+
+        # Конфиг можно менять только при остановленной службе: qBittorrent перезаписывает его при выходе
+        QB_WAS_ACTIVE=0
+        systemctl is-active --quiet qbittorrent && QB_WAS_ACTIVE=1
+        systemctl stop qbittorrent >> "${LOG_FILE}" 2>&1
+        mkdir -p "$(dirname "${QB_CONF}")"
+        [ -f "${QB_CONF}" ] || : > "${QB_CONF}"
+        grep -q '^\[Preferences\]' "${QB_CONF}" || printf '\n[Preferences]\n' >> "${QB_CONF}"
+        qb_set 'WebUI\HTTPS\Enabled' 'true'
+        qb_set 'WebUI\HTTPS\CertificatePath' "${QB_CERT_DIR}/fullchain.pem"
+        qb_set 'WebUI\HTTPS\KeyPath' "${QB_CERT_DIR}/private.key"
+        chown qbittorrent:qbittorrent "${QB_CONF}"
+        chmod 600 "${QB_CONF}"
+
+        QB_PORT=$(grep -oP '^WebUI\\Port=\K[0-9]+' "${QB_CONF}" | head -n 1)
+        QB_PORT="${QB_PORT:-8080}"
+
+        if [ "${QB_WAS_ACTIVE}" = "1" ]; then
+            log "Запускаем qBittorrent..."
+            systemctl start qbittorrent >> "${LOG_FILE}" 2>&1
+            QB_CODE=""
+            for i in $(seq 1 30); do
+                QB_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "https://127.0.0.1:${QB_PORT}/" 2>/dev/null)
+                [ "${QB_CODE}" = "200" ] && break
+                sleep 1
+            done
+            if [ "${QB_CODE}" = "200" ]; then
+                log "qBittorrent: HTTPS включён, адрес: https://${DOMAIN}:${QB_PORT}"
+                echo -e "\033[0;32m✅ qBittorrent: HTTPS включён. Заходите по адресу: https://${DOMAIN}:${QB_PORT}\033[0m"
+                echo "   (домен должен указывать на IP этого сервера; по IP страница тоже откроется, но браузер покажет предупреждение)"
+            else
+                log "qBittorrent: HTTPS не ответил за 30 секунд. Смотрите: journalctl -u qbittorrent -n 30"
+                echo -e "\033[0;31m❌ qBittorrent запущен, но HTTPS не ответил за 30 секунд. Смотрите: journalctl -u qbittorrent -n 30\033[0m"
+            fi
+        else
+            log "qBittorrent сейчас остановлен: HTTPS применится при его следующем запуске."
+            echo "ℹ️ qBittorrent сейчас остановлен. HTTPS применится при следующем запуске, адрес будет: https://${DOMAIN}:${QB_PORT}"
+        fi
+    else
+        log "qBittorrent: сертификат не удалось скопировать в ${QB_CERT_DIR}, HTTPS не включаю."
+        echo -e "\033[0;31m❌ qBittorrent: не удалось скопировать сертификат, HTTPS не включён. Подробности: ${LOG_FILE}\033[0m"
+    fi
+else
+    log "5. qBittorrent не найден, пропускаем."
+fi
+
+if systemctl cat torrserver.service >/dev/null 2>&1; then
+    log "6. Обнаружен TorrServer. Устанавливаем сертификат и включаем HTTPS..."
+    TS_CERT_DIR="/etc/torrserver-cert"
+    TS_CONF="/opt/torrserver/torrserver.config"
+    TS_KS="/usr/local/sbin/torrserver-ks.sh"
+
+    # Правит DAEMON_OPTIONS в torrserver.config: убирает параметры HTTPS, затем (если $2 не пусто) дописывает $2 в конец значения
+    ts_set_ssl_opts() {
+        local conf="$1"
+        ADD="$2" awk -v sq="'" '
+            BEGIN { add = ENVIRON["ADD"]; nq = "[^[:space:]\"" sq "]+" }
+            /^DAEMON_OPTIONS=/ {
+                line = $0
+                gsub("[[:space:]]--sslport[ =]" nq, "", line)
+                gsub("[[:space:]]--sslcert[ =]" nq, "", line)
+                gsub("[[:space:]]--sslkey[ =]" nq, "", line)
+                gsub("[[:space:]]--ssl[[:space:]]", " ", line)
+                gsub("[[:space:]]--ssl\"", "\"", line)
+                gsub("[[:space:]]--ssl" sq, sq, line)
+                sub("[[:space:]]--ssl$", "", line)
+                if (add == "") gsub("[[:space:]]--force-https", "", line)
+                sub(/[[:space:]]+$/, "", line)
+                if (add != "") {
+                    last = substr(line, length(line), 1)
+                    if (last == "\"" || last == sq) line = substr(line, 1, length(line) - 1) add last
+                    else line = line add
+                }
+                print line
+                next
+            }
+            { print }
+        ' "${conf}" > "${conf}.tmp" && cat "${conf}.tmp" > "${conf}"
+        rm -f "${conf}.tmp"
+    }
+
+    mkdir -p "${TS_CERT_DIR}"
+    # Копия сертификата именно для TorrServer: он работает от своего пользователя (или от root), а в /root у него доступа нет
+    /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${TS_CERT_DIR}/private.key" --fullchain-file "${TS_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
+    if [ -s "${TS_CERT_DIR}/fullchain.pem" ] && [ -s "${TS_CERT_DIR}/private.key" ]; then
+        echo "${DOMAIN}" > "${TS_CERT_DIR}/domain"
+        # Читать сертификат должен тот пользователь, от которого сейчас работает служба (после привязки к VPN это torrserver)
+        TS_RUN_USER=$(systemctl show -p User --value torrserver 2>/dev/null)
+        [ -n "${TS_RUN_USER}" ] && id -u "${TS_RUN_USER}" >/dev/null 2>&1 || TS_RUN_USER=root
+        TS_RUN_GROUP=$(id -gn "${TS_RUN_USER}" 2>/dev/null || echo root)
+        chown -R "${TS_RUN_USER}:${TS_RUN_GROUP}" "${TS_CERT_DIR}"
+        chmod 700 "${TS_CERT_DIR}"
+        chmod 600 "${TS_CERT_DIR}/private.key"
+        chmod 644 "${TS_CERT_DIR}/fullchain.pem" "${TS_CERT_DIR}/domain"
+
+        if [ -f "${TS_CONF}" ] && grep -q '^DAEMON_OPTIONS=' "${TS_CONF}"; then
+            # Порт HTTPS: если уже был задан, оставляем его, иначе 8091
+            TS_SSL_PORT=$(grep -oP '(?<=--sslport )\d+' "${TS_CONF}" | head -n 1)
+            TS_SSL_PORT="${TS_SSL_PORT:-8091}"
+            ts_set_ssl_opts "${TS_CONF}" " --ssl --sslport ${TS_SSL_PORT} --sslcert ${TS_CERT_DIR}/fullchain.pem --sslkey ${TS_CERT_DIR}/private.key"
+            log "TorrServer: в ${TS_CONF} включены параметры HTTPS (порт ${TS_SSL_PORT})."
+
+            # Порт в UFW (запоминаем, только если такого правила не было: при удалении закроем именно его)
+            if command -v ufw >/dev/null 2>&1; then
+                if ! ufw show added 2>/dev/null | grep -qE "allow ${TS_SSL_PORT}/tcp"; then
+                    if ufw allow "${TS_SSL_PORT}/tcp" >> "${LOG_FILE}" 2>&1; then
+                        echo "${TS_SSL_PORT}" > "${TS_CERT_DIR}/ufw_port"
+                        log "TorrServer: порт ${TS_SSL_PORT}/tcp открыт в UFW."
+                    fi
+                fi
+            fi
+
+            # Kill-switch: ответы с порта HTTPS должны идти напрямую (иначе страница не откроется)
+            if [ -x "${TS_KS}" ]; then
+                if grep -q 'DAEMON_OPTIONS' "${TS_KS}"; then
+                    "${TS_KS}" up >> "${LOG_FILE}" 2>&1
+                else
+                    log "TorrServer: kill-switch старой версии, порт ${TS_SSL_PORT} в нём не учтён."
+                    echo -e "\033[1;33m⚠️ TorrServer: kill-switch от старой версии torrserver.sh, ответы с порта ${TS_SSL_PORT} он блокирует. Запустите torrserver.sh, пункт 9 (авто-исправление), затем повторите это действие.\033[0m"
+                fi
+            fi
+
+            TS_WAS_ACTIVE=0
+            systemctl is-active --quiet torrserver && TS_WAS_ACTIVE=1
+            if [ "${TS_WAS_ACTIVE}" = "1" ]; then
+                log "Перезапускаем TorrServer..."
+                systemctl restart torrserver >> "${LOG_FILE}" 2>&1
+                TS_CODE=""
+                for i in $(seq 1 30); do
+                    TS_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "https://127.0.0.1:${TS_SSL_PORT}/echo" 2>/dev/null)
+                    case "${TS_CODE}" in ""|000) ;; *) break ;; esac
+                    sleep 1
+                done
+                case "${TS_CODE}" in
+                    ""|000)
+                        log "TorrServer: HTTPS не ответил за 30 секунд. Смотрите: journalctl -u torrserver -n 30"
+                        echo -e "\033[0;31m❌ TorrServer запущен, но HTTPS не ответил за 30 секунд. Смотрите: journalctl -u torrserver -n 30\033[0m"
+                        ;;
+                    *)
+                        log "TorrServer: HTTPS включён, адрес: https://${DOMAIN}:${TS_SSL_PORT}"
+                        echo -e "\033[0;32m✅ TorrServer: HTTPS включён. Заходите по адресу: https://${DOMAIN}:${TS_SSL_PORT}\033[0m"
+                        TS_HTTP_PORT=$(grep -oP '(?<=--port )\d+' "${TS_CONF}" | head -n 1)
+                        TS_HTTP_PORT="${TS_HTTP_PORT:-8090}"
+                        echo "   Обычный HTTP продолжает работать как раньше, без шифрования: http://IP-сервера:${TS_HTTP_PORT}"
+                        echo "   Порт ${TS_SSL_PORT}/tcp откройте ещё и в Security List / NSG в консоли Oracle Cloud, если не открывали."
+                        ;;
+                esac
+            else
+                log "TorrServer сейчас остановлен: HTTPS применится при его следующем запуске."
+                echo "ℹ️ TorrServer сейчас остановлен. HTTPS применится при следующем запуске, адрес будет: https://${DOMAIN}:${TS_SSL_PORT}"
+            fi
+        else
+            log "TorrServer: в ${TS_CONF} нет строки DAEMON_OPTIONS, HTTPS не включаю."
+            echo -e "\033[0;31m❌ TorrServer: не нашёл ${TS_CONF} со строкой DAEMON_OPTIONS, HTTPS не включён. Пришлите вывод команды: systemctl cat torrserver\033[0m"
+        fi
+    else
+        log "TorrServer: сертификат не удалось скопировать в ${TS_CERT_DIR}, HTTPS не включаю."
+        echo -e "\033[0;31m❌ TorrServer: не удалось скопировать сертификат, HTTPS не включён. Подробности: ${LOG_FILE}\033[0m"
+    fi
+else
+    log "6. TorrServer не найден, пропускаем."
+fi
+
 log "====== Развертывание для ${DOMAIN} завершено. ======"; echo "" >> "${LOG_FILE}"
 EOF
     chmod +x "${HOOK_SCRIPT_PATH}"
@@ -215,14 +389,14 @@ EOF
 select_dns_provider() {
     local mode=$1  # "issue" или "sync"
     
-    echo "================================================================"
-    echo "       Выберите DNS-провайдера для выпуска сертификата:      "
-    echo "================================================================"
+    echo -e "${yellow}================================================================${plain}"
+    echo -e "${yellow}       Выберите DNS-провайдера для выпуска сертификата:      ${plain}"
+    echo -e "${yellow}================================================================${plain}"
     echo "1) Cloudflare (с поддержкой поддоменов *.domain)"
     echo "2) DuckDNS (только основной домен)"
     echo "3) deSEC (с поддержкой поддоменов *.domain)"
     echo "4) Dynu (с поддержкой поддоменов *.domain)"
-    echo "================================================================"
+    echo -e "${yellow}================================================================${plain}"
     read -p "Ваш выбор (1, 2, 3 или 4): " dns_choice
     echo ""
 
@@ -252,12 +426,12 @@ select_dns_provider() {
         export DEDYN_TOKEN="${DEDYN_TOKEN}"
 
         echo ""
-        echo "================================================================"
-        echo "   Это корневой домен или поддомен?                            "
-        echo "================================================================"
+        echo -e "${yellow}================================================================${plain}"
+        echo -e "${yellow}   Это корневой домен или поддомен?                            ${plain}"
+        echo -e "${yellow}================================================================${plain}"
         echo "1) Корневой домен (например domain.dedyn.io)"
         echo "2) Поддомен (например subdomain.domain.dedyn.io) - использовать challenge-alias"
-        echo "================================================================"
+        echo -e "${yellow}================================================================${plain}"
         read -p "Ваш выбор (1 или 2): " domain_type
         echo ""
 
@@ -319,7 +493,65 @@ issue_certificate() {
     fi
 }
 
+# --- Уже выпущенные сертификаты (папки в /root/my_cert) ---
+# Печатает по строке на сертификат: домен|дата окончания|сколько дней осталось (если срок определить не удалось: ?|?).
+# Если сертификатов нет, ничего не печатает.
+list_issued_certs() {
+    local d f end end_ts days diff
+    [[ -d "${CERT_BASE_DIR}" ]] || return 0
+    for d in "${CERT_BASE_DIR}"/*/; do
+        [[ -d "$d" ]] || continue
+        f="${d}fullchain.pem"
+        [[ -s "$f" ]] || continue
+        end=$(openssl x509 -enddate -noout -in "$f" 2>/dev/null | cut -d= -f2)
+        end_ts=$(date -d "$end" +%s 2>/dev/null)
+        if [[ -n "$end" && -n "$end_ts" ]]; then
+            diff=$(( end_ts - $(date +%s) ))
+            if (( diff < 0 )); then days=-1; else days=$(( diff / 86400 )); fi
+            echo "$(basename "$d")|$(date -d "@${end_ts}" +%F)|${days}"
+        else
+            echo "$(basename "$d")|?|?"
+        fi
+    done
+}
+
+# Показывает выпущенные сертификаты (или что их нет)
+print_cert_status() {
+    local ind="${1:-   }" dom until days found=0
+    while IFS='|' read -r dom until days; do
+        [[ -z "$dom" ]] && continue
+        found=1
+        if [[ "$days" == "?" ]]; then
+            echo -e "${ind}✅ ${dom}: сертификат есть (срок действия определить не удалось)"
+        elif (( days < 0 )); then
+            echo -e "${ind}❌ ${red}${dom}: срок действия истёк ${until}${plain}"
+        elif (( days <= 14 )); then
+            echo -e "${ind}⚠️ ${yellow}${dom}: действует до ${until}, осталось ${days} дн. (скоро истекает)${plain}"
+        else
+            echo -e "${ind}✅ ${green}${dom}${plain}: действует до ${until} (осталось ${days} дн.)"
+        fi
+    done < <(list_issued_certs)
+    (( found )) || echo "${ind}Сертификат пока не выпущен."
+}
+
+# Перед повторным выпуском: если сертификат уже есть, говорим об этом и спрашиваем.
+# Возвращает 0 (продолжать), если сертификатов нет или вы ответили y; иначе 1.
+confirm_reissue_if_cert_exists() {
+    local a
+    [[ -n "$(list_issued_certs)" ]] || return 0
+    echo ""
+    echo -e "${yellow}⚠️ На этом сервере уже есть выпущенный сертификат:${plain}"
+    print_cert_status
+    echo "   Повторный выпуск обычно не нужен: acme.sh сам обновляет сертификат примерно через 60 дней после выпуска"
+    echo "   (за ~30 дней до конца срока) и сам раскладывает его по программам."
+    echo "   У Let's Encrypt есть лимит на выпуск одинаковых сертификатов (около 5 в неделю)."
+    echo "   Если нужно только установить сертификат в новую программу, используйте пункт 2."
+    read -p "Всё равно выпустить сертификат заново? [y/N, Enter = N (нет)]: " a
+    [[ "$a" == "y" || "$a" == "Y" || "$a" == "д" || "$a" == "Д" ]]
+}
+
 ssl_cert_issue_and_deploy() {
+    confirm_reissue_if_cert_exists || { echo "Отменено. Ничего не изменено."; return; }
     install_acme || { LOGE "Прерывание из-за ошибки установки acme.sh"; exit 1; }
     echo ""
 
@@ -365,30 +597,96 @@ sync_certificates() {
         return
     fi
 
-    echo ""
-    TARGET_DOMAIN="$domain"
-
-    select_dns_provider "sync" || return
-
-    create_renew_hook "$domain"
-    
-    LOGI "Обновляем конфигурацию acme.sh для домена ${domain}..."
-
-    issue_certificate "${domain}" "${HOOK_SCRIPT_PATH}" "--force"
-
-    if [[ $? -ne 0 ]]; then
-        LOGE "Произошла ошибка при обновлении конфигурации сертификата."
+    # Перевыпуск не нужен: сертификат уже выпущен, а acme.sh хранит только путь к hook-скрипту.
+    # Достаточно заново создать hook (в нём список программ) и запустить его на существующем сертификате.
+    if [[ ! -f ~/.acme.sh/acme.sh || ( ! -d ~/.acme.sh/${domain}_ecc && ! -d ~/.acme.sh/${domain} ) ]]; then
+        LOGE "acme.sh не знает домен ${domain} (нет его данных в ~/.acme.sh). Выпустите сертификат заново: пункт 1."
         return
     fi
 
-    LOGI "Запускаем развертывание сертификата для ${domain}..."
+    echo ""
+    create_renew_hook "$domain"
+
+    LOGI "Запускаем развертывание сертификата для ${domain} (без перевыпуска)..."
     "${HOOK_SCRIPT_PATH}" "$domain"
-    
+
     LOGI "Синхронизация завершена. Сертификат установлен во все обнаруженные службы."
+}
+
+# Выключает HTTPS в qBittorrent и удаляет его копию сертификата (иначе qBittorrent остался бы с путями к удалённым файлам)
+remove_qbittorrent_https() {
+    local qb_conf="/home/qbittorrent/.config/qBittorrent/qBittorrent.conf"
+    local qb_cert_dir="/etc/qbittorrent-cert"
+    local was=0
+    [[ -d "${qb_cert_dir}" ]] || return 0
+    LOGD "Отключаем HTTPS в qBittorrent и удаляем его копию сертификата..."
+    if [[ -f "${qb_conf}" ]] && grep -q '^WebUI\\HTTPS\\' "${qb_conf}"; then
+        systemctl is-active --quiet qbittorrent && was=1
+        systemctl stop qbittorrent >/dev/null 2>&1
+        sed -i '/^WebUI\\HTTPS\\Enabled=/d; /^WebUI\\HTTPS\\CertificatePath=/d; /^WebUI\\HTTPS\\KeyPath=/d' "${qb_conf}"
+        (( was )) && systemctl start qbittorrent >/dev/null 2>&1
+        LOGI "HTTPS в qBittorrent выключен, веб-интерфейс снова работает по http://."
+    fi
+    rm -rf "${qb_cert_dir}"
+}
+
+# Правит DAEMON_OPTIONS в torrserver.config: убирает параметры HTTPS, затем (если $2 не пусто) дописывает $2 в конец значения.
+# При пустом $2 (отключение HTTPS) убирается и --force-https, иначе TorrServer не запустится без --ssl.
+ts_set_ssl_opts() {
+    local conf="$1"
+    ADD="$2" awk -v sq="'" '
+        BEGIN { add = ENVIRON["ADD"]; nq = "[^[:space:]\"" sq "]+" }
+        /^DAEMON_OPTIONS=/ {
+            line = $0
+            gsub("[[:space:]]--sslport[ =]" nq, "", line)
+            gsub("[[:space:]]--sslcert[ =]" nq, "", line)
+            gsub("[[:space:]]--sslkey[ =]" nq, "", line)
+            gsub("[[:space:]]--ssl[[:space:]]", " ", line)
+            gsub("[[:space:]]--ssl\"", "\"", line)
+            gsub("[[:space:]]--ssl" sq, sq, line)
+            sub("[[:space:]]--ssl$", "", line)
+            if (add == "") gsub("[[:space:]]--force-https", "", line)
+            sub(/[[:space:]]+$/, "", line)
+            if (add != "") {
+                last = substr(line, length(line), 1)
+                if (last == "\"" || last == sq) line = substr(line, 1, length(line) - 1) add last
+                else line = line add
+            }
+            print line
+            next
+        }
+        { print }
+    ' "${conf}" > "${conf}.tmp" && cat "${conf}.tmp" > "${conf}"
+    rm -f "${conf}.tmp"
+}
+
+# Выключает HTTPS в TorrServer, закрывает порт в UFW (если его открыл ssl.sh) и удаляет его копию сертификата
+remove_torrserver_https() {
+    local ts_conf="/opt/torrserver/torrserver.config"
+    local ts_cert_dir="/etc/torrserver-cert"
+    local ts_ks="/usr/local/sbin/torrserver-ks.sh"
+    local was=0 uport
+    [[ -d "${ts_cert_dir}" ]] || return 0
+    LOGD "Отключаем HTTPS в TorrServer и удаляем его копию сертификата..."
+    if [[ -f "${ts_conf}" ]] && grep -qE '^DAEMON_OPTIONS=.*--ssl' "${ts_conf}"; then
+        systemctl is-active --quiet torrserver && was=1
+        ts_set_ssl_opts "${ts_conf}" ""
+        [[ -x "${ts_ks}" ]] && "${ts_ks}" up >/dev/null 2>&1
+        (( was )) && systemctl restart torrserver >/dev/null 2>&1
+        LOGI "HTTPS в TorrServer выключен, веб-интерфейс снова работает по http://."
+    fi
+    uport=$(cat "${ts_cert_dir}/ufw_port" 2>/dev/null)
+    if [[ -n "${uport}" ]] && command -v ufw >/dev/null 2>&1; then
+        ufw --force delete allow "${uport}/tcp" >/dev/null 2>&1
+        LOGD "Порт ${uport}/tcp в UFW закрыт. В Security List / NSG Oracle Cloud его закройте вручную."
+    fi
+    rm -rf "${ts_cert_dir}"
 }
 
 remove_acme() {
     LOGI "Начинаем удаление acme.sh..."
+    remove_qbittorrent_https
+    remove_torrserver_https
     if [ -f "$HOME/.acme.sh/acme.sh" ]; then
         ~/.acme.sh/acme.sh --uninstall
         LOGI "acme.sh и задача cron успешно удалены."
@@ -421,15 +719,18 @@ show_cert_path() {
 
 # --- ГЛАВНОЕ МЕНЮ ---
 while true; do
-    echo "================================================================"
-    echo " Управление SSL сертификатами (Cloudflare, DuckDNS, deSEC, Dynu)"
-    echo "================================================================"
+    echo -e "\n${yellow}================================================================${plain}"
+    echo -e "${yellow} Управление SSL сертификатами (Cloudflare, DuckDNS, deSEC, Dynu)${plain}"
+    echo -e "${yellow}================================================================${plain}"
+    echo " Сертификаты на этом сервере:"
+    print_cert_status " "
+    echo -e "${yellow}================================================================${plain}"
     echo "1. Установить/Перевыпустить сертификат"
     echo "2. Синхронизировать сертификаты с приложениями (после установки нового ПО)"
     echo "3. Показать путь к файлам сертификата"
     echo "4. Полностью удалить acme.sh, сертификаты и все настройки"
     echo "0. Выйти"
-    echo "================================================================"
+    echo -e "${yellow}================================================================${plain}"
     read -p "Введите номер действия (0-4): " choice
     case "$choice" in
         1) ssl_cert_issue_and_deploy ;;
@@ -439,5 +740,4 @@ while true; do
         0) echo "Выход..."; exit 0 ;;
         *) echo -e "${red}⚠️ Неверный ввод! Пожалуйста, выберите от 0 до 4.${plain}" ;;
     esac
-    echo ""
 done
