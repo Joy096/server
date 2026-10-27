@@ -1,16 +1,4 @@
 #!/bin/bash
-
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
-
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
-
-if [[ $EUID -ne 0 ]]; then
-    echo "❌ Этот скрипт должен выполняться от root!"
-    exit 1
-fi
-
 # qbittorrent_full.sh - qBittorrent-nox + WireGuard VPN + kill-switch для Ubuntu (Oracle Cloud)
 #
 # Схема та же, что в torrserver_full.sh для TorrServer: через VPN идёт ТОЛЬКО трафик пользователя
@@ -29,6 +17,10 @@ fi
 # поэтому он не пересекается с TorrServer (100 и 90/100/110).
 #
 # Дополнительно: создание .torrent из файла или папки и запуск раздачи (как в qBittorrent.sh).
+#
+# HTTPS для веб-интерфейса включает скрипт ssl.sh (пункты 1 и 2): он кладёт сертификат в /etc/qbittorrent-cert
+# и прописывает его в qBittorrent. Этот скрипт сам определяет, что HTTPS включён, и ходит в веб-интерфейс
+# по https://127.0.0.1 (с curl -k). На работу через VPN HTTPS не влияет.
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -62,6 +54,8 @@ DROPIN="${DROPIN_DIR}/vpn.conf"
 
 CRED_FILE="/etc/qbittorrent-credentials"
 TRACKERS_FILE="/etc/qbittorrent-trackers.txt"
+QB_CERT_DIR="/etc/qbittorrent-cert"      # сертификат для HTTPS веб-интерфейса (создаёт ssl.sh)
+SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 13 меню
 STATE_FILE="/etc/qbittorrent-vpn.state"
 TS_STATE="/etc/torrserver-vpn.state"     # состояние torrserver_full.sh (чтобы подхватить название провайдера)
 DEFAULT_WEB_PORT=8080
@@ -189,6 +183,27 @@ detect_port() {
     [[ -z "$WEB_PORT" ]] && WEB_PORT="$DEFAULT_WEB_PORT"
 }
 
+# Протокол веб-интерфейса по настройкам: https, если в конфиге qBittorrent включён HTTPS (его включает ssl.sh)
+web_scheme() {
+    local en
+    en=$(grep -oiP '^WebUI\\HTTPS\\Enabled=\K\w+' "$QB_CONF" 2>/dev/null | head -n 1)
+    if [[ "${en,,}" == "true" ]]; then echo https; else echo http; fi
+}
+
+# Адрес веб-интерфейса для запросов с самого сервера. Запросы к нему делаются с curl -k:
+# сертификат выписан на ваш домен, а не на 127.0.0.1, поэтому проверку имени нужно пропускать.
+web_base() {
+    local s
+    detect_port
+    s=$(web_scheme)
+    if [[ "$s" == "https" ]] \
+        && ! curl -sk -o /dev/null --max-time 3 "https://127.0.0.1:${WEB_PORT}/" 2>/dev/null \
+        && curl -s -o /dev/null --max-time 3 "http://127.0.0.1:${WEB_PORT}/" 2>/dev/null; then
+        s=http   # HTTPS включён в настройках, но не поднялся (например, не прочитался сертификат): отвечает HTTP
+    fi
+    echo "${s}://127.0.0.1:${WEB_PORT}"
+}
+
 vpn_configured() { [[ -n "$VPN_NAME" && -f "$CONF" ]]; }
 
 # Конфиг общий, если его создали не мы или к нему подключён TorrServer
@@ -276,8 +291,8 @@ api_login() {
     user=$(cut -d: -f1 "$CRED_FILE")
     pass=$(cut -d: -f2- "$CRED_FILE")
     jar=$(mktemp)
-    res=$(curl -s -c "$jar" --max-time 8 --data-urlencode "username=${user}" --data-urlencode "password=${pass}" \
-        "http://127.0.0.1:${WEB_PORT}/api/v2/auth/login")
+    res=$(curl -sk -c "$jar" --max-time 8 --data-urlencode "username=${user}" --data-urlencode "password=${pass}" \
+        "$(web_base)/api/v2/auth/login")
     if [[ "$res" == "Ok." ]]; then
         echo "$jar"
     else
@@ -291,7 +306,7 @@ wait_for_web() {
     detect_port
     echo -n "Жду запуска веб-интерфейса"
     for i in $(seq 1 40); do
-        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${WEB_PORT}/" 2>/dev/null)
+        code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "$(web_base)/" 2>/dev/null)
         [[ "$code" == "200" ]] && { echo; return 0; }
         echo -n "."; sleep 1
     done
@@ -808,7 +823,7 @@ setup_qbit_only() {
     # Без VPN входящий порт для пиров нужен: открываем его (как в qBittorrent.sh)
     local jar lp
     if jar=$(api_login); then
-        lp=$(curl -s -b "$jar" "http://127.0.0.1:${WEB_PORT}/api/v2/app/preferences" | grep -oP '"listen_port":\K[0-9]+')
+        lp=$(curl -sk -b "$jar" "$(web_base)/api/v2/app/preferences" | grep -oP '"listen_port":\K[0-9]+')
         rm -f "$jar"
         if [[ -n "$lp" ]]; then
             ufw_allow_tracked "${lp}/tcp"
@@ -824,11 +839,18 @@ setup_qbit_only() {
 show_address() {
     qb_installed || { echo -e "${RED}qBittorrent не установлен.${NC}"; return; }
     detect_port
-    local ip user
+    local ip user base scheme dom
     ip=$(get_ip)
     user=$(cut -d: -f1 "$CRED_FILE" 2>/dev/null)
+    base=$(web_base); scheme="${base%%://*}"
     echo -e "\n${YELLOW}=== Веб-интерфейс qBittorrent ===${NC}"
-    echo "Адрес:  http://${ip:-IP_СЕРВЕРА}:${WEB_PORT}"
+    if [[ "$scheme" == "https" ]]; then
+        dom=$(cat "${QB_CERT_DIR}/domain" 2>/dev/null)
+        echo "Адрес:  https://${dom:-ВАШ_ДОМЕН}:${WEB_PORT}"
+        echo "        (заходите по домену из сертификата; по IP https://${ip:-IP_СЕРВЕРА}:${WEB_PORT} тоже откроется, но браузер покажет предупреждение)"
+    else
+        echo "Адрес:  http://${ip:-IP_СЕРВЕРА}:${WEB_PORT}"
+    fi
     echo "Логин:  ${user:-неизвестен}"
     echo "Пароль: хранится в ${CRED_FILE} (смотреть: sudo cat ${CRED_FILE})"
 }
@@ -947,9 +969,9 @@ create_torrent() {
     fi
     local attempt
     for attempt in 1 2 3; do
-        res=$(curl -s -b "$jar" --max-time 60 \
+        res=$(curl -sk -b "$jar" --max-time 60 \
             -F "torrents=@${tfile}" -F "savepath=${DL_DIR}" -F "skip_checking=true" \
-            "http://127.0.0.1:${WEB_PORT}/api/v2/torrents/add")
+            "$(web_base)/api/v2/torrents/add")
         [[ "$res" == "Ok." ]] && break
         sleep 3
     done
@@ -973,7 +995,14 @@ check_status() {
     detect_port
     echo "Служба:       $(systemctl is-active "$QB_SVC") (автозапуск: $(systemctl is-enabled "$QB_SVC" 2>/dev/null))"
     echo "Веб-порт:     ${WEB_PORT}  $(ss -ltn 2>/dev/null | grep -q ":${WEB_PORT} " && echo '(слушает)' || echo '(НЕ слушает)')"
-    echo "HTTP локально: $(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${WEB_PORT}/") (200 - ок)"
+    local qb_base
+    qb_base=$(web_base)
+    echo "Веб локально: $(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "${qb_base}/") (200 - ок), протокол: ${qb_base%%://*}"
+    if [[ "$(web_scheme)" == "https" ]]; then
+        echo "HTTPS:        включён (сертификат: ${QB_CERT_DIR})"
+    else
+        echo "HTTPS:        выключен (включается скриптом ssl.sh)"
+    fi
     if [[ -f "$DROPIN" ]]; then
         echo "Привязка к VPN: да (${VPN_LABEL:-$CONF_NAME}, интерфейс ${CONF_NAME})"
     else
@@ -1089,10 +1118,11 @@ check_safety() {
     fi
 
     # 5. Веб-интерфейс отвечает локально
-    local code
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${WEB_PORT}/")
+    local code web
+    web=$(web_base)
+    code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "${web}/")
     if [[ "$code" == "200" ]]; then
-        echo -e "${GREEN}[OK] Веб-интерфейс qBittorrent отвечает (порт ${WEB_PORT}).${NC}"
+        echo -e "${GREEN}[OK] Веб-интерфейс qBittorrent отвечает (${web%%://*}, порт ${WEB_PORT}).${NC}"
     else
         echo -e "${RED}[FAIL] Веб-интерфейс qBittorrent не отвечает (код: ${code:-нет ответа}).${NC}"
         errors=$((errors + 1))
@@ -1240,6 +1270,7 @@ remove_qbit_service() {
     systemctl daemon-reload
     systemctl reset-failed "$QB_SVC" 2>/dev/null
     rm -f "$CRED_FILE"
+    rm -rf "$QB_CERT_DIR"   # копия сертификата для HTTPS (её создаёт ssl.sh)
 }
 
 remove_user_and_home() {
@@ -1409,6 +1440,26 @@ uninstall_menu() {
     [[ -d /root/torrents ]] && echo "  • копии приватных торрентов в /root/torrents скрипт не удаляет"
 }
 
+# ---------------------------------------------------------------- ПЕРЕХОД В ssl.sh
+
+# Скачивает ssl.sh (выпуск и установка сертификата) и запускает его. После выхода из него вы вернётесь в это меню.
+run_ssl_script() {
+    echo -e "\n${YELLOW}=== Сертификат для HTTPS: переход в ssl.sh ===${NC}"
+    command -v curl &>/dev/null || apt_install_tracked curl || return 1
+    local tmp
+    tmp=$(mktemp /tmp/ssl.XXXXXX.sh) || { echo -e "${RED}Не удалось создать временный файл.${NC}"; return 1; }
+    echo "Скачиваю ssl.sh: ${SSL_SCRIPT_URL}"
+    if ! curl -fsSL --max-time 30 "$SSL_SCRIPT_URL" -o "$tmp" 2>/dev/null || [[ ! -s "$tmp" ]] || ! head -n 1 "$tmp" | grep -q '^#!.*bash'; then
+        echo -e "${RED}❌ Не удалось скачать ssl.sh (нет интернета, неверная ссылка или файл не скрипт).${NC}"
+        rm -f "$tmp"
+        return 1
+    fi
+    echo -e "${GREEN}✅ Скачан. Запускаю (выход из ssl.sh: пункт 0, потом вы вернётесь сюда).${NC}\n"
+    bash "$tmp"
+    rm -f "$tmp"
+    echo -e "\n${GREEN}Вы вернулись в меню qBittorrent.${NC} Адрес веб-интерфейса и протокол: пункт 6; статус: пункт 8."
+}
+
 # ---------------------------------------------------------------- МЕНЮ
 
 while true; do
@@ -1433,9 +1484,10 @@ while true; do
     echo "10. Запустить АВТО-ИСПРАВЛЕНИЕ вручную"
     echo "11. Откат (убрать привязку к VPN)"
     echo "12. Удаление (вернуть систему к состоянию до установки)"
+    echo "13. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
     echo "0.  Выход"
     echo "=================================================="
-    read -rp "Выберите действие [0-12]: " choice
+    read -rp "Выберите действие [0-13]: " choice
 
     case $choice in
         1) setup_full && check_safety ;;
@@ -1450,6 +1502,7 @@ while true; do
         10) auto_fix ;;
         11) revert_routing ;;
         12) uninstall_menu ;;
+        13) run_ssl_script ;;
         0) echo "Выход."; exit 0 ;;
         *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
     esac
