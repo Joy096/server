@@ -1,16 +1,4 @@
 #!/bin/bash
-
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
-
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
-
-if [[ $EUID -ne 0 ]]; then
-    echo "❌ Этот скрипт должен выполняться от root!"
-    exit 1
-fi
-
 # torrserver_full.sh - TorrServer + любой WireGuard VPN для ЧИСТОЙ установки на Ubuntu (Oracle Cloud)
 #
 # Работает с любым провайдером, который выдаёт конфиг WireGuard (ClearVPN, Mullvad, Proton и т.д.).
@@ -21,6 +9,8 @@ fi
 # Схема: через VPN идёт ТОЛЬКО трафик пользователя "torrserver" (policy routing по UID).
 #   - SSH, apt и всё остальное ходит напрямую через сеть Oracle (ens3);
 #   - ответы TorrServer с порта веб-интерфейса (8090) идут напрямую на ТВ;
+#   - HTTPS (порт 8091) включает ssl.sh (пункт 2 его меню; запустить его можно отсюда, пункт 12):
+#     kill-switch сам подхватывает порт HTTPS из torrserver.config;
 #   - kill-switch: если VPN упал, у пользователя torrserver нет сети вообще,
 #     утечки через основной интерфейс не будет.
 
@@ -47,6 +37,11 @@ KS_UNIT="/etc/systemd/system/torrserver-killswitch.service"
 DROPIN_DIR="/etc/systemd/system/${TS_SVC}.service.d"
 DROPIN="${DROPIN_DIR}/vpn.conf"
 WEB_PORT=8090
+SSL_PORT=""      # порт HTTPS (если HTTPS включён через ssl.sh), иначе пусто
+HTTPS_REMOVED_PORT=""   # порт HTTPS, правило UFW для которого удалено при удалении TorrServer (для напоминания про Oracle)
+TS_CONFIG="${TS_DIR}/torrserver.config"
+CERT_DIR="/etc/torrserver-cert"   # копия сертификата для TorrServer (кладёт ssl.sh)
+SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 12 меню
 
 # Состояние, которое запоминается между запусками: провайдер, имя интерфейса, профиль настроек
 STATE_FILE="/etc/torrserver-vpn.state"
@@ -115,6 +110,9 @@ ensure_user() {
     if [[ -n "$data_dir" && -d "$data_dir" ]]; then
         chown -R "$TS_USER:$TS_USER" "$data_dir"
     fi
+
+    # Копия сертификата для HTTPS (её кладёт ssl.sh): читать её должен тот же пользователь, от которого работает служба
+    [[ -d "$CERT_DIR" ]] && chown -R "$TS_USER:$TS_USER" "$CERT_DIR"
 }
 
 # Порт веб-интерфейса TorrServer: из torrserver.config, потом из юнита, по умолчанию 8090.
@@ -123,6 +121,16 @@ detect_port() {
     WEB_PORT=$(grep -oP '(?<=--port )\d+' "${TS_DIR}/torrserver.config" 2>/dev/null | head -n 1)
     [[ -z "$WEB_PORT" ]] && WEB_PORT=$(systemctl cat "$TS_SVC" 2>/dev/null | grep -oP -- '(--port|-p)[ =]\K[0-9]+' | head -n 1)
     [[ -z "$WEB_PORT" ]] && WEB_PORT=8090
+}
+
+# Порт HTTPS: пусто, если в torrserver.config нет параметра --ssl (включает его ssl.sh, пункт 2 меню).
+# Без --sslport TorrServer использует 8091.
+detect_ssl_port() {
+    SSL_PORT=""
+    if grep -qE '^DAEMON_OPTIONS=.*--ssl([[:space:]"'"'"']|$)' "$TS_CONFIG" 2>/dev/null; then
+        SSL_PORT=$(grep -oP '(?<=--sslport )\d+' "$TS_CONFIG" 2>/dev/null | head -n 1)
+        [[ -z "$SSL_PORT" ]] && SSL_PORT=8091
+    fi
 }
 
 # Внешний IP. Аргументы (необязательно) - команда-обёртка, например: runuser -u torrserver --
@@ -336,10 +344,17 @@ install_routing_helpers() {
     # Kill-switch: действует всегда, даже пока VPN не поднят
     cat > "$KS_SCRIPT" <<'KSEOF'
 #!/bin/bash
-# up|down. Ответы TorrServer с порта PORT идут обычным маршрутом (на ТВ),
+# up|down. Ответы TorrServer с порта PORT (и с порта HTTPS, если он включён) идут обычным маршрутом (на ТВ),
 # любой другой трафик пользователя torrserver запрещён, пока нет правила через VPN (приоритет 100).
 U=$(id -u torrserver) || exit 1
 PORT=__PORT__
+CONF=__CONF__
+# HTTPS включает ssl.sh (параметр --ssl в DAEMON_OPTIONS): порт читаем при каждом запуске, чтобы он всегда был актуальным
+SSLPORT=""
+if grep -qE '^DAEMON_OPTIONS=.*--ssl([[:space:]"'"'"']|$)' "$CONF" 2>/dev/null; then
+    SSLPORT=$(grep -oP '(?<=--sslport )\d+' "$CONF" 2>/dev/null | head -n 1)
+    SSLPORT=${SSLPORT:-8091}
+fi
 clean() {
     for p in 90 110; do
         while ip -4 rule del priority $p 2>/dev/null; do :; done
@@ -353,6 +368,10 @@ case "$1" in
         ip -4 rule add priority 110 uidrange "$U-$U" prohibit || exit 1
         ip -6 rule add priority 90  ipproto tcp sport "$PORT" lookup main 2>/dev/null
         ip -6 rule add priority 110 uidrange "$U-$U" prohibit 2>/dev/null
+        if [ -n "$SSLPORT" ]; then
+            ip -4 rule add priority 90 ipproto tcp sport "$SSLPORT" lookup main 2>/dev/null
+            ip -6 rule add priority 90 ipproto tcp sport "$SSLPORT" lookup main 2>/dev/null
+        fi
         ;;
     down) clean ;;
     *) exit 1 ;;
@@ -360,6 +379,7 @@ esac
 exit 0
 KSEOF
     sed -i "s/__PORT__/${WEB_PORT}/" "$KS_SCRIPT"
+    sed -i "s|__CONF__|${TS_CONFIG}|" "$KS_SCRIPT"
 
     # Маршрут через VPN: добавляется и убирается вместе с туннелем (PostUp/PreDown в wg-конфиге).
     # Имя интерфейса приходит аргументом, поэтому скрипт не зависит от провайдера.
@@ -794,6 +814,7 @@ check_safety() {
     fi
 
     detect_port
+    detect_ssl_port
 
     local errors=0
     local uid
@@ -854,6 +875,15 @@ check_safety() {
         errors=$((errors + 1))
     fi
 
+    if [[ -n "$SSL_PORT" ]]; then
+        if ip -4 rule show | grep -q "sport ${SSL_PORT} lookup main"; then
+            echo -e "${GREEN}[OK] Ответы по HTTPS (порт ${SSL_PORT}) идут напрямую на ТВ.${NC}"
+        else
+            echo -e "${RED}[FAIL] HTTPS включён (порт ${SSL_PORT}), но правила для его ответов нет! (пункт 9 исправит)${NC}"
+            errors=$((errors + 1))
+        fi
+    fi
+
     if ip route show table "$TABLE" 2>/dev/null | grep -q "default dev ${CONF_NAME}"; then
         echo -e "${GREEN}[OK] Маршрут по умолчанию в таблице ${TABLE} идёт в ${CONF_NAME}.${NC}"
     else
@@ -884,6 +914,17 @@ check_safety() {
     else
         echo -e "${RED}[FAIL] Веб-интерфейс TorrServer не отвечает (код: ${code:-нет ответа}).${NC}"
         errors=$((errors + 1))
+    fi
+
+    if [[ -n "$SSL_PORT" ]]; then
+        local scode
+        scode=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "https://127.0.0.1:${SSL_PORT}/echo")
+        if [[ -n "$scode" && "$scode" != "000" ]]; then
+            echo -e "${GREEN}[OK] HTTPS TorrServer отвечает (порт ${SSL_PORT}).${NC}"
+        else
+            echo -e "${RED}[FAIL] HTTPS TorrServer не отвечает (порт ${SSL_PORT}). Смотрите: journalctl -u ${TS_SVC} -n 30${NC}"
+            errors=$((errors + 1))
+        fi
     fi
 
     echo -e "\n--------------------------------------------------"
@@ -1045,6 +1086,18 @@ remove_torrserver_parts() {
     systemctl daemon-reload
     systemctl reset-failed "$TS_SVC" 2>/dev/null
     PROFILE=""
+
+    # HTTPS (его включал ssl.sh): копия сертификата с закрытым ключом и правило UFW, которое открыл ssl.sh
+    if [[ -d "$CERT_DIR" ]]; then
+        HTTPS_REMOVED_PORT=$(cat "${CERT_DIR}/ufw_port" 2>/dev/null)
+        if [[ -n "$HTTPS_REMOVED_PORT" ]] && command -v ufw &>/dev/null; then
+            ufw --force delete allow "${HTTPS_REMOVED_PORT}/tcp" >/dev/null 2>&1
+            echo "   Удалены копия сертификата для HTTPS (${CERT_DIR}) и правило UFW ${HTTPS_REMOVED_PORT}/tcp."
+        else
+            echo "   Удалена копия сертификата для HTTPS (${CERT_DIR})."
+        fi
+        rm -rf "$CERT_DIR"
+    fi
 }
 
 remove_ufw_rule() {
@@ -1213,8 +1266,30 @@ uninstall_menu() {
 
     echo -e "${YELLOW}Не забудьте вручную:${NC}"
     (( do_f )) || (( do_t )) && echo "  • закрыть порт ${WEB_PORT} в Oracle Cloud (Security List / NSG), если открывали"
+    [[ -n "$HTTPS_REMOVED_PORT" ]] && echo "  • закрыть порт HTTPS ${HTTPS_REMOVED_PORT} в Oracle Cloud (Security List / NSG), если открывали"
     (( do_w )) && echo "  • отозвать (удалить) ключ/устройство в кабинете VPN-провайдера"
     echo "  • файлы, которые установщик TorrServer мог создать вне ${TS_DIR}, скрипт не отслеживает"
+}
+
+# ---------------------------------------------------------------- ПЕРЕХОД В ssl.sh
+
+# Скачивает ssl.sh (выпуск и установка сертификата, включение HTTPS) и запускает его.
+# После выхода из него (пункт 0) вы вернётесь в это меню.
+run_ssl_script() {
+    echo -e "\n${YELLOW}=== Сертификат для HTTPS: переход в ssl.sh ===${NC}"
+    command -v curl &>/dev/null || apt_install_tracked curl || return 1
+    local tmp
+    tmp=$(mktemp /tmp/ssl.XXXXXX.sh) || { echo -e "${RED}Не удалось создать временный файл.${NC}"; return 1; }
+    echo "Скачиваю ssl.sh: ${SSL_SCRIPT_URL}"
+    if ! curl -fsSL --max-time 30 "$SSL_SCRIPT_URL" -o "$tmp" 2>/dev/null || [[ ! -s "$tmp" ]] || ! head -n 1 "$tmp" | grep -q '^#!.*bash'; then
+        echo -e "${RED}❌ Не удалось скачать ssl.sh (нет интернета, неверная ссылка или файл не скрипт).${NC}"
+        rm -f "$tmp"
+        return 1
+    fi
+    echo -e "${GREEN}✅ Скачан. Запускаю (выход из ssl.sh: пункт 0, потом вы вернётесь сюда).${NC}\n"
+    bash "$tmp"
+    rm -f "$tmp"
+    echo -e "\n${GREEN}Вы вернулись в меню TorrServer.${NC} Проверить, что HTTPS работает: пункт 8."
 }
 
 # ---------------------------------------------------------------- МЕНЮ
@@ -1240,9 +1315,10 @@ while true; do
     echo "9.  Запустить АВТО-ИСПРАВЛЕНИЕ вручную"
     echo "10. Откат (убрать привязку к VPN)"
     echo "11. Удаление (вернуть систему к состоянию до установки)"
+    echo "12. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
     echo "0.  Выход"
     echo "=================================================="
-    read -p "Выберите действие [0-11]: " choice
+    read -p "Выберите действие [0-12]: " choice
 
     case $choice in
         1) setup_vpn && setup_torrserver; check_safety ;;
@@ -1256,6 +1332,7 @@ while true; do
         9) auto_fix ;;
         10) revert_routing ;;
         11) uninstall_menu ;;
+        12) run_ssl_script ;;
         0) echo "Выход."; exit 0 ;;
         *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
     esac
