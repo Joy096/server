@@ -15,7 +15,7 @@
 *   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Устанавливает панель управления прокси-сервисами 3X-UI (форк X-UI).
 *   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Устанавливает сетевой блокировщик рекламы и трекеров AdGuard Home (через Snap).
 *   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Устанавливает VPN-сервер Outline для простого создания и управления VPN-доступом.
-*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Устанавливает популярный торрент-клиент qBittorrent с веб-интерфейсом.
+*   **[`qbittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qbittorrent.sh):** Устанавливает популярный торрент-клиент qBittorrent с веб-интерфейсом.
 *   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Устанавливает TorrServer Matroska, позволяющий смотреть торренты онлайн без полной загрузки.
 *   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Устанавливает Jackett - прокси-сервер для работы с API различных торрент-трекеров.
 *   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Устанавливает Lampa – веб-интерфейс для просмотра медиаконтента.
@@ -64,7 +64,7 @@
 *   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Встановлює панель керування проксі-сервісами 3X-UI (форк X-UI).
 *   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Встановлює мережевий блокувальник реклами та трекерів AdGuard Home (через Snap).
 *   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Встановлює VPN-сервер Outline для простого створення та керування VPN-доступом.
-*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Встановлює популярний торент-клієнт qBittorrent з веб-інтерфейсом.
+*   **[`qbittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qbittorrent.sh):** Встановлює популярний торент-клієнт qBittorrent з веб-інтерфейсом.
 *   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Встановлює TorrServer Matroska, що дозволяє дивитися торенти онлайн без повного завантаження.
 *   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Встановлює Jackett - проксі-сервер для роботи з API різноманітних торент-трекерів.
 *   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Встановлює Lampa – веб-інтерфейс для перегляду медіаконтенту.
@@ -113,7 +113,7 @@ Welcome! This repository contains a collection of Bash scripts to simplify and a
 *   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Installs the 3X-UI proxy service management panel (a fork of X-UI).
 *   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Installs the network-wide ad and tracker blocker AdGuard Home (via Snap).
 *   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Installs the Outline VPN server for easy creation and management of VPN access.
-*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Installs the popular qBittorrent torrent client with its web UI.
+*   **[`qbittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qbittorrent.sh):** Installs the popular qBittorrent torrent client with its web UI.
 *   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Installs TorrServer Matroska, allowing online torrent streaming without full download.
 *   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Installs Jackett - a proxy server for working with the APIs of various torrent trackers.
 *   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Installs Lampa – ф web interface for viewing media content.
@@ -162,7 +162,7 @@ Witaj! To repozytorium zawiera kolekcję skryptów Bash do uproszczenia i automa
 *   **[`x-ui.sh`](https://github.com/Joy096/server/raw/refs/heads/main/x-ui.sh):** Instaluje panel zarządzania usługami proxy 3X-UI (fork X-UI).
 *   **[`adguard_home.sh`](https://github.com/Joy096/server/raw/refs/heads/main/adguard_home.sh):** Instaluje sieciowy bloker reklam i trackerów AdGuard Home (przez Snap).
 *   **[`outline_vpn.sh`](https://github.com/Joy096/server/raw/refs/heads/main/outline_vpn.sh):** Instaluje serwer VPN Outline do łatwego tworzenia i zarządzania dostępem VPN.
-*   **[`qBittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qBittorrent.sh):** Instaluje popularnego klienta torrent qBittorrent z interfejsem webowym.
+*   **[`qbittorrent.sh`](https://github.com/Joy096/server/raw/refs/heads/main/qbittorrent.sh):** Instaluje popularnego klienta torrent qBittorrent z interfejsem webowym.
 *   **[`torrserver.sh`](https://github.com/Joy096/server/raw/refs/heads/main/torrserver.sh):** Instaluje TorrServer Matroska, pozwalający oglądać torrenty online bez pełnego pobierania.
 *   **[`jackett.sh`](https://github.com/Joy096/server/raw/refs/heads/main/jackett.sh):** Instaluje Jackett - serwer proxy do pracy z API różnych trackerów torrent.
 *   **[`lampa.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa.sh):** Instaluje Lampa – interfejs webowy do przeglądania treści multimedialnych.
