@@ -55,7 +55,7 @@ DROPIN="${DROPIN_DIR}/vpn.conf"
 CRED_FILE="/etc/qbittorrent-credentials"
 TRACKERS_FILE="/etc/qbittorrent-trackers.txt"
 QB_CERT_DIR="/etc/qbittorrent-cert"      # сертификат для HTTPS веб-интерфейса (создаёт ssl.sh)
-SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 13 меню
+SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 3 → 7 меню
 STATE_FILE="/etc/qbittorrent-vpn.state"
 TS_STATE="/etc/torrserver-vpn.state"     # состояние torrserver_full.sh (чтобы подхватить название провайдера)
 DEFAULT_WEB_PORT=8080
@@ -622,7 +622,7 @@ setup_vpn() {
 
     sed -i 's/\r$//' "$CONF"
     if ! validate_wg_conf "$CONF"; then
-        echo -e "${RED}Конфиг не принят и удалён. Запустите пункт 3 и вставьте конфиг заново.${NC}"
+        echo -e "${RED}Конфиг не принят и удалён. Запустите пункт 2 → 1 и вставьте конфиг заново.${NC}"
         rm -f "$CONF"
         VPN_NAME=""; VPN_LABEL=""; apply_vpn_vars; save_state
         return 1
@@ -677,7 +677,7 @@ reapply_vpn() {
 # Подготовка к замене VPN: старое подключение убираем (общий конфиг остаётся другому скрипту)
 remove_vpn_parts_for_replace() {
     if qb_installed && grep -q 'Session\\Interface=' "$QB_CONF" 2>/dev/null; then
-        # Имя интерфейса сменится: старую привязку снимаем (новая ставится пунктом 4)
+        # Имя интерфейса сменится: старую привязку снимаем (новая ставится пунктом 2 → 2)
         systemctl stop "$QB_SVC" 2>/dev/null
         clear_qb_interface
         systemctl start "$QB_SVC" 2>/dev/null
@@ -785,11 +785,11 @@ install_qbittorrent_core() {
 # Привязка qBittorrent к VPN: kill-switch, drop-in, перезапуск службы
 fix_qbit_binding() {
     if ! vpn_configured; then
-        echo -e "${RED}❌ VPN не настроен. Сначала выполните пункт 3: иначе kill-switch оставит qBittorrent без сети.${NC}"
+        echo -e "${RED}❌ VPN не настроен. Сначала выполните пункт 2 → 1: иначе kill-switch оставит qBittorrent без сети.${NC}"
         return 1
     fi
     if ! qb_installed; then
-        echo -e "${RED}❌ qBittorrent не установлен (пункт 1 или 2).${NC}"
+        echo -e "${RED}❌ qBittorrent не установлен (пункт 1).${NC}"
         return 1
     fi
     systemctl stop "$QB_SVC" 2>/dev/null
@@ -815,7 +815,7 @@ setup_qbit_only() {
     echo -e "\n${YELLOW}=== Установка только qBittorrent (без VPN) ===${NC}"
     echo -e "${YELLOW}⚠️ Без VPN весь P2P-трафик идёт с реального IP сервера Oracle.${NC}"
     echo "   Жалобы правообладателей на такой IP могут привести к блокировке аккаунта Oracle."
-    echo "   VPN можно подключить позже: пункт 3 (VPN), затем пункт 4 (привязать qBittorrent)."
+    echo "   VPN можно подключить позже: пункт 2 → 1 (добавить VPN-конфиг), затем пункт 2 → 2 (включить защиту)."
     yn "Продолжить установку без VPN?" || return
 
     install_qbittorrent_core || return 1
@@ -964,7 +964,7 @@ create_torrent() {
 
     local jar res
     if ! jar=$(api_login); then
-        echo -e "${YELLOW}⚠️ Не удалось войти в qBittorrent (проверьте пункт 7). Добавьте файл ${tfile} в интерфейсе вручную, папка данных: ${DL_DIR}.${NC}"
+        echo -e "${YELLOW}⚠️ Не удалось войти в qBittorrent (проверьте пункт 3 → 6). Добавьте файл ${tfile} в интерфейсе вручную, папка данных: ${DL_DIR}.${NC}"
         return 1
     fi
     local attempt
@@ -1033,7 +1033,7 @@ check_safety() {
     fi
     if ! vpn_configured || [[ ! -f "$DROPIN" ]]; then
         echo -e "${YELLOW}qBittorrent не привязан к VPN: его трафик идёт с реального IP сервера.${NC}"
-        echo "Подключить VPN: пункт 3, затем пункт 4."
+        echo "Подключить VPN: пункт 2 → 1, затем пункт 2 → 2."
         return
     fi
 
@@ -1147,7 +1147,7 @@ check_safety() {
 auto_fix() {
     echo -e "\n${YELLOW}🛠️ [АВТО-ИСПРАВЛЕНИЕ] Пересборка правил маршрутизации и служб...${NC}"
     if ! vpn_configured; then
-        echo -e "${RED}⚠️ VPN не настроен (нет конфига ${CONF}). Запустите пункт 3.${NC}"
+        echo -e "${RED}⚠️ VPN не настроен (нет конфига ${CONF}). Запустите пункт 2 → 1.${NC}"
         return
     fi
     check_kernel_support || return
@@ -1457,52 +1457,225 @@ run_ssl_script() {
     echo -e "${GREEN}✅ Скачан. Запускаю (выход из ssl.sh: пункт 0, потом вы вернётесь сюда).${NC}\n"
     bash "$tmp"
     rm -f "$tmp"
-    echo -e "\n${GREEN}Вы вернулись в меню qBittorrent.${NC} Адрес веб-интерфейса и протокол: пункт 6; статус: пункт 8."
+    echo -e "\n${GREEN}Вы вернулись в меню qBittorrent.${NC} Адрес веб-интерфейса и протокол: пункт 3 → 5; статус: пункт 3 → 3."
 }
 
 # ---------------------------------------------------------------- МЕНЮ
 
-while true; do
-    if vpn_configured; then
-        vpn_info="VPN: ${VPN_LABEL:-$CONF_NAME} (${CONF_NAME})$(wg_shared && echo ', общий')"
+# Шапка: состояние qBittorrent, VPN и HTTPS и подсказка, что делать дальше
+print_home() {
+    local qb vpn https hint tun prot dom
+    detect_port
+    if ! qb_installed; then
+        qb="${YELLOW}не установлен${NC}"
+    elif systemctl is-active --quiet "$QB_SVC"; then
+        qb="${GREEN}работает${NC} (порт ${WEB_PORT})"
     else
-        vpn_info="VPN: не настроен"
+        qb="${RED}остановлен${NC} (порт ${WEB_PORT})"
+    fi
+    if vpn_configured; then
+        if wg show "$CONF_NAME" &>/dev/null; then tun="${GREEN}туннель активен${NC}"; else tun="${RED}туннель не активен${NC}"; fi
+        if [[ -f "$DROPIN" ]]; then prot="${GREEN}защита включена${NC}"; else prot="${YELLOW}защита выключена (qBittorrent идёт напрямую)${NC}"; fi
+        vpn="${VPN_LABEL:-$CONF_NAME} (${CONF_NAME})$(wg_shared && echo ', общий'): ${tun}, ${prot}"
+    else
+        vpn="${YELLOW}не настроен${NC}"
+    fi
+    if ! qb_installed; then
+        https="-"
+    elif [[ "$(web_scheme)" == "https" ]]; then
+        dom=$(cat "${QB_CERT_DIR}/domain" 2>/dev/null)
+        https="${GREEN}включён${NC} (https://${dom:-домен}:${WEB_PORT})"
+    else
+        https="${YELLOW}выключен${NC} (включить: пункт 3 → 7)"
+    fi
+    if ! qb_installed; then
+        hint="пункт 1 (установка)."
+    elif ! vpn_configured; then
+        hint="пункт 2 → 1 (добавить VPN-конфиг), затем пункт 2 → 2 (включить защиту)."
+    elif [[ ! -f "$DROPIN" ]]; then
+        hint="пункт 2 → 2 (включить защиту: qBittorrent только через VPN)."
+    elif ! wg show "$CONF_NAME" &>/dev/null; then
+        hint="туннель не активен: пункт 4 (проверка безопасности)."
+    else
+        hint="всё настроено, проверить безопасность можно в пункте 4."
     fi
     echo -e "\n${YELLOW}==================================================${NC}"
-    echo -e "${YELLOW}   Управление qBittorrent + WireGuard VPN (Oracle)   ${NC}"
-    echo -e "${YELLOW}   ${vpn_info}   ${NC}"
+    echo -e "${YELLOW}   qBittorrent + WireGuard VPN (Oracle)${NC}"
     echo -e "${YELLOW}==================================================${NC}"
-    echo "1.  Полная установка (VPN + Kill-Switch + qBittorrent)"
-    echo "2.  Установить только qBittorrent (без VPN)"
-    echo "3.  Подключить / настроить VPN (общий туннель или свой конфиг)"
-    echo "4.  Привязать qBittorrent к VPN (kill-switch)"
-    echo "5.  Создать торрент из файла/папки и начать раздачу"
-    echo "6.  Показать адрес и логин веб-интерфейса"
-    echo "7.  Сменить логин/пароль веб-интерфейса"
-    echo "8.  Статус (qBittorrent и VPN)"
-    echo "9.  ПРОВЕРКА БЕЗОПАСНОСТИ (Маршруты, IP, Привязка)"
-    echo "10. Запустить АВТО-ИСПРАВЛЕНИЕ вручную"
-    echo "11. Откат (убрать привязку к VPN)"
-    echo "12. Удаление (вернуть систему к состоянию до установки)"
-    echo "13. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
-    echo "0.  Выход"
-    echo "=================================================="
-    read -rp "Выберите действие [0-13]: " choice
+    echo -e "qBittorrent:    ${qb}"
+    echo -e "VPN:            ${vpn}"
+    echo -e "HTTPS:          ${https}"
+    echo -e "Следующий шаг:  ${hint}"
+    echo -e "${YELLOW}==================================================${NC}"
+}
+
+# Статус VPN: интерфейс, рукопожатие, привязка и внешние IP
+check_vpn() {
+    echo -e "\n${YELLOW}=== Статус VPN${VPN_LABEL:+ (${VPN_LABEL})} ===${NC}"
+    if ! vpn_configured; then
+        echo -e "${YELLOW}VPN не настроен. Подключить: пункт 2 → 1.${NC}"
+        return
+    fi
+    if wg show "$CONF_NAME" &>/dev/null; then
+        wg show "$CONF_NAME" | head -n 12
+        if [[ -f "$DROPIN" ]]; then
+            echo -e "\nЗащита (привязка qBittorrent к VPN): ${GREEN}включена${NC}"
+        else
+            echo -e "\nЗащита (привязка qBittorrent к VPN): ${YELLOW}выключена, включить: пункт 2 → 2${NC}"
+        fi
+        echo -e "--- Тест IP-адресов ---"
+        local main_ip vpn_ip
+        main_ip=$(get_ip)
+        vpn_ip=$(get_ip runuser -u "$QB_USER" --)
+        echo -e "Прямой IP сервера (Oracle/SSH):         ${GREEN}${main_ip:-не доступен}${NC}"
+        echo -e "IP qBittorrent (через ${VPN_LABEL:-VPN}):  ${GREEN}${vpn_ip:-не доступен}${NC}"
+    else
+        echo -e "${RED}❌ Интерфейс ${CONF_NAME} не активен! Пункт 4 (проверка безопасности) предложит исправить.${NC}"
+    fi
+}
+
+# Запуск, остановка и перезапуск службы qBittorrent (привязка к VPN и настройки при этом сохраняются)
+qb_need_installed() {
+    qb_installed && return 0
+    echo -e "${RED}qBittorrent не установлен. Установка: пункт 1.${NC}"
+    return 1
+}
+qb_start() {
+    qb_need_installed || return
+    systemctl start "$QB_SVC"
+    sleep 1
+    if systemctl is-active --quiet "$QB_SVC"; then
+        if wait_for_web; then
+            echo -e "${GREEN}✅ qBittorrent запущен, веб-интерфейс отвечает.${NC}"
+        else
+            echo -e "${YELLOW}⚠️ Служба запущена, но веб-интерфейс пока не ответил. Проверьте позже: пункт 3 → 3.${NC}"
+        fi
+    else
+        echo -e "${RED}❌ qBittorrent не запустился. Смотрите: journalctl -u ${QB_SVC} -n 30${NC}"
+    fi
+}
+qb_stop() {
+    qb_need_installed || return
+    systemctl stop "$QB_SVC"
+    echo -e "${GREEN}✅ qBittorrent остановлен (до следующего запуска или перезагрузки сервера он не работает).${NC}"
+}
+qb_restart() {
+    qb_need_installed || return
+    systemctl restart "$QB_SVC"
+    sleep 1
+    if systemctl is-active --quiet "$QB_SVC"; then
+        if wait_for_web; then
+            echo -e "${GREEN}✅ qBittorrent перезапущен, веб-интерфейс отвечает.${NC}"
+        else
+            echo -e "${YELLOW}⚠️ Служба перезапущена, но веб-интерфейс пока не ответил. Проверьте позже: пункт 3 → 3.${NC}"
+        fi
+    else
+        echo -e "${RED}❌ qBittorrent не запустился после перезапуска. Смотрите: journalctl -u ${QB_SVC} -n 30${NC}"
+    fi
+}
+
+install_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== Установка ===${NC}"
+        echo "1. Полная установка (VPN + защита + qBittorrent)"
+        echo "2. Только qBittorrent (без VPN)"
+        echo "0. Назад"
+        read -rp "Выберите [0-2]: " c || return
+        case "$c" in
+            1) setup_full && check_safety ;;
+            2) setup_qbit_only ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+vpn_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== VPN (WireGuard) ===${NC}"
+        echo "1. Добавить или сменить VPN-конфиг WireGuard (общий туннель или свой конфиг)"
+        echo "2. Включить защиту: qBittorrent только через VPN (если VPN упадёт, сети у него не будет)"
+        echo "3. Выключить защиту: qBittorrent напрямую, без VPN"
+        echo "4. Статус VPN (интерфейс и IP)"
+        echo "0. Назад"
+        read -rp "Выберите [0-4]: " c || return
+        case "$c" in
+            1) setup_vpn ;;
+            2) fix_qbit_binding ;;
+            3) revert_routing ;;
+            4) check_vpn ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+qbit_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== qBittorrent ===${NC}"
+        if systemctl is-active --quiet "$QB_SVC"; then
+            echo "1. Остановить qBittorrent"
+        else
+            echo "1. Запустить qBittorrent"
+        fi
+        echo "2. Перезапустить qBittorrent"
+        echo "3. Статус qBittorrent (служба, веб-интерфейс, HTTPS, VPN)"
+        echo "4. Создать торрент из файла/папки и начать раздачу"
+        echo "5. Показать адрес и логин веб-интерфейса"
+        echo "6. Сменить логин/пароль веб-интерфейса"
+        echo "7. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
+        echo "0. Назад"
+        read -rp "Выберите [0-7]: " c || return
+        case "$c" in
+            1) if systemctl is-active --quiet "$QB_SVC"; then qb_stop; else qb_start; fi ;;
+            2) qb_restart ;;
+            3) check_status ;;
+            4) create_torrent ;;
+            5) show_address ;;
+            6) change_password ;;
+            7) run_ssl_script ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+safety_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== Проверка безопасности ===${NC}"
+        echo "1. Проверка безопасности (маршруты, IP, привязка; при проблемах предложит исправить)"
+        echo "2. Принудительно пересоздать правила и привязку (если проверка не помогла)"
+        echo "0. Назад"
+        read -rp "Выберите [0-2]: " c || return
+        case "$c" in
+            1) check_safety ;;
+            2) auto_fix ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+while true; do
+    print_home
+    echo "1. Установка (полная или только qBittorrent)"
+    echo "2. VPN (WireGuard: конфиг, защита, статус)"
+    echo "3. qBittorrent (запуск, торренты, доступ, HTTPS)"
+    echo "4. Проверка безопасности"
+    echo "5. Удаление (вернуть систему к состоянию до установки)"
+    echo "0. Выход"
+    read -rp "Выберите действие [0-5]: " choice || exit 0
 
     case $choice in
-        1) setup_full && check_safety ;;
-        2) setup_qbit_only ;;
-        3) setup_vpn ;;
-        4) fix_qbit_binding ;;
-        5) create_torrent ;;
-        6) show_address ;;
-        7) change_password ;;
-        8) check_status ;;
-        9) check_safety ;;
-        10) auto_fix ;;
-        11) revert_routing ;;
-        12) uninstall_menu ;;
-        13) run_ssl_script ;;
+        1) install_menu ;;
+        2) vpn_menu ;;
+        3) qbit_menu ;;
+        4) safety_menu ;;
+        5) uninstall_menu ;;
         0) echo "Выход."; exit 0 ;;
         *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
     esac

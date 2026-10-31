@@ -1,6 +1,6 @@
 # ssl.sh: описание
 
-Скрипт Vitalii (репозиторий GitHub `Joy096/server`, ссылка `https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh`): выпуск сертификата Let's Encrypt через acme.sh (DNS-проверка) и автоматическая установка сертификата в программы на сервере. Запуск: `sudo bash ssl.sh`. Другие скрипты (`qbittorrent.sh` пункт 13, `torrserver.sh` пункт 12, `jackett.sh` пункт 8) скачивают его по ссылке выше и запускают; после пункта 0 возвращают в свои меню. Новые версии `ssl.sh` в репозиторий Vitalii заливает сам.
+Скрипт Vitalii (репозиторий GitHub `Joy096/server`, ссылка `https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh`): выпуск сертификата Let's Encrypt через acme.sh (DNS-проверка) и автоматическая установка сертификата в программы на сервере. Запуск: `sudo bash ssl.sh`. Другие скрипты (`qbittorrent.sh` пункт 3 → 7, `torrserver.sh` пункт 12, `jackett.sh` пункт 8) скачивают его по ссылке выше и запускают; после пункта 0 возвращают в свои меню. Новые версии `ssl.sh` в репозиторий Vitalii заливает сам.
 
 Решения Vitalii: в скрипте нет самоудаления (trap) и проверки root; их он добавляет сам, если нужно. Интерфейс только на русском.
 
