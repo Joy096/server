@@ -711,39 +711,45 @@ remove_flaresolverr() {
 
 show_status() {
     installed || { echo -e "${RED}Jackett не установлен.${NC}"; return; }
-    local port cfg
+    local port cfg code k rule
     port=$(get_port); cfg=$(cfg_file)
+    # Подписи выровнены вручную до 16 символов, чтобы значения шли ровной колонкой
     echo -e "\n${YELLOW}📊 [СТАТУС JACKETT]${NC}"
-    echo "Служба:      $(systemctl is-active "$SVC") (автозапуск: $(systemctl is-enabled "$SVC" 2>/dev/null))"
-    echo "Пользователь: ${JK_USER:-неизвестен}"
-    echo "Порт:        ${port}  $(ss -ltn 2>/dev/null | grep -q ":${port} " && echo '(слушает)' || echo '(НЕ слушает)')"
-    local code
+    echo "Служба:         $(systemctl is-active "$SVC") (автозапуск: $(systemctl is-enabled "$SVC" 2>/dev/null))"
+    echo "Пользователь:   ${JK_USER:-неизвестен}"
+    echo "Порт:           ${port}  $(ss -ltn 2>/dev/null | grep -q ":${port} " && echo '(слушает)' || echo '(НЕ слушает)')"
     code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:${port}/UI/Dashboard")
-    echo "HTTP локально: ${code} (200/302 - панель отвечает)"
+    echo "HTTP локально:  ${code} (200/302 - панель отвечает)"
     if [[ -f "$cfg" ]]; then
-        local k
         k=$(jq -r '.APIKey // empty' "$cfg")
-        echo "API key:     ${k:0:4}… (длина ${#k})"
-        echo "External:    $(jq -r '.AllowExternal' "$cfg"),  CORS: $(jq -r '.AllowCORS' "$cfg")"
+        echo "API key:        ${k:-не задан}"
+        echo "External:       $(jq -r '.AllowExternal' "$cfg"),  CORS: $(jq -r '.AllowCORS' "$cfg")"
         if https_active; then
-            echo "HTTPS:       включён, $(https_url) (служба jackett-tls: $(systemctl is-active jackett-tls))"
+            echo "HTTPS:          включён, $(https_url) (служба jackett-tls: $(systemctl is-active jackett-tls))"
         else
-            echo "HTTPS:       нет (пункт 2 → 6 откроет ssl.sh: там пункт 1 выпускает сертификат, пункт 2 ставит уже выпущенный)"
+            echo "HTTPS:          нет (пункт 2 → 6 откроет ssl.sh: там пункт 1 выпускает сертификат, пункт 2 ставит уже выпущенный)"
         fi
         if [[ -z "$(jq -r '.AdminPassword // empty' "$cfg")" ]]; then
-            echo -e "${RED}Пароль панели НЕ задан!${NC}"
+            echo -e "Пароль панели:  ${RED}НЕ задан!${NC}"
         else
-            echo "Пароль панели: задан"
+            echo "Пароль панели:  задан"
         fi
-        echo "Indexers:    $(ls "$(cfg_dir)/Indexers"/*.json 2>/dev/null | wc -l) шт."
+        echo "Indexers:       $(ls "$(cfg_dir)/Indexers"/*.json 2>/dev/null | wc -l) шт."
     fi
     if command -v docker &>/dev/null && fs_container_exists; then
-        echo "${FS_LABEL}: $(docker inspect -f '{{.State.Status}}' "$FS_NAME" 2>/dev/null), адрес в Jackett: $(jq -r '.FlareSolverrUrl // "не задан"' "$cfg" 2>/dev/null)"
+        echo "Cloudflare:     ${FS_LABEL}: $(docker inspect -f '{{.State.Status}}' "$FS_NAME" 2>/dev/null), адрес в Jackett: $(jq -r '.FlareSolverrUrl // "не задан"' "$cfg" 2>/dev/null)"
     else
-        echo "FlareSolverr/Byparr: не установлен"
+        echo "Cloudflare:     FlareSolverr/Byparr не установлен"
     fi
-    echo "Память:      RAM $(ram_mb) МБ, swap $(swap_mb) МБ"
-    echo "UFW:         $(ufw status 2>/dev/null | grep -E "${port}" | head -n 3 | tr '\n' ';')"
+    echo "Память:         RAM $(ram_mb) МБ, swap $(swap_mb) МБ"
+    # Правила UFW для порта: каждое с новой строки, лишние пробелы убраны
+    rule=$(ufw status 2>/dev/null | grep -E "${port}" | tr -s ' ' | head -n 4)
+    if [[ -z "$rule" ]]; then
+        echo "UFW:            правил для порта ${port} нет"
+    else
+        echo "UFW:            $(echo "$rule" | head -n 1)"
+        echo "$rule" | tail -n +2 | sed 's/^/                /'
+    fi
 }
 
 # ---------------------------------------------------------------- УДАЛЕНИЕ
