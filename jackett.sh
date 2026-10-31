@@ -10,7 +10,7 @@
 #    - открывает порт 9117 в UFW;
 #    - HTTPS включает скрипт ssl.sh (пункт 1 или 2): Jackett сам HTTPS не умеет, поэтому ssl.sh ставит перед ним
 #      nginx (порт 9118) и закрывает обычный HTTP снаружи; этот скрипт такой режим понимает и не ломает;
-#      пункт 8 меню скачивает ssl.sh и запускает его, после выхода из него вы возвращаетесь сюда;
+#      пункт 2 → 6 меню скачивает ssl.sh и запускает его, после выхода из него вы возвращаетесь сюда;
 #    - ставит FlareSolverr или Byparr (в Docker, только на localhost) для трекеров с защитой Cloudflare
 #      и подключает его к Jackett (лечит ошибку "Challenge detected but FlareSolverr is not configured");
 #      при нехватке памяти предлагает создать swap-файл;
@@ -35,7 +35,7 @@ SVC="jackett"
 UNIT="/etc/systemd/system/jackett.service"
 STATE_FILE="/etc/jackett-setup.state"
 DEFAULT_PORT=9117
-SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 8 меню
+SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 2 → 6 меню
 
 # --- Учёт того, что создал скрипт (нужен для полного удаления) ---
 JK_USER=""          # пользователь, от которого работает Jackett
@@ -244,13 +244,13 @@ install_jackett() {
         return 1
     fi
 
-    configure_basic || echo -e "${YELLOW}Настройку можно повторить позже: пункт 2 меню.${NC}"
+    configure_basic || echo -e "${YELLOW}Настройку можно повторить позже: пункт 2 → 4.${NC}"
     if https_active; then
         echo -e "${YELLOW}HTTPS уже включён (ssl.sh): обычный порт Jackett снаружи закрыт, в UFW его не открываю.${NC}"
     else
         open_port "$(get_port)"
     fi
-    install_flaresolverr auto || echo -e "${YELLOW}FlareSolverr не установлен. Повторить можно позже: пункт 5 меню.${NC}"
+    install_flaresolverr auto || echo -e "${YELLOW}FlareSolverr не установлен. Повторить можно позже: пункт 4 → 1.${NC}"
     show_summary
 }
 
@@ -313,7 +313,7 @@ verify_login() {
         return 0
     fi
     echo -e "${YELLOW}⚠️ Автопроверка входа не подтвердилась (без пароля: ${code_anon}, с паролем: ${code_auth}).${NC}"
-    echo "   Откройте панель в браузере и войдите. Если пароль не подошёл, запустите пункт 2 меню ещё раз:"
+    echo "   Откройте панель в браузере и войдите. Если пароль не подошёл, запустите пункт 2 → 4 ещё раз:"
     echo "   он перезапишет API key и пароль, заблокироваться насовсем нельзя."
     return 1
 }
@@ -362,12 +362,12 @@ show_summary() {
     echo "   Конфиг:  $(cfg_file)"
     echo
     echo "   Войдите с паролем, который вы только что задали, и добавьте трекеры (Add indexer)."
-    echo "   Логины/пароли трекеров вводятся в панели, либо восстановите папку Indexers (пункт 3 меню)."
+    echo "   Логины/пароли трекеров вводятся в панели, либо восстановите папку Indexers (пункт 3 → 1)."
     if https_active; then
         echo "   В Oracle Cloud порт HTTPS должен быть открыт в Security List (или в NSG), а порт ${port}/tcp можно закрыть."
     else
         echo "   В Oracle Cloud откройте порт ${port}/tcp в Security List (или в NSG)."
-        echo "   HTTPS: пункт 8 меню откроет ssl.sh (там пункт 1 выпускает сертификат, пункт 2 ставит уже выпущенный): Jackett получит адрес https://домен:9118."
+        echo "   HTTPS: пункт 2 → 6 откроет ssl.sh (там пункт 1 выпускает сертификат, пункт 2 ставит уже выпущенный): Jackett получит адрес https://домен:9118."
     fi
 }
 
@@ -609,7 +609,7 @@ install_flaresolverr() {
     fs_container_exists && pre_exists=1
     if (( $(ram_mb) < 1500 )) && [[ "$mode" == "auto" ]]; then
         echo -e "${YELLOW}Оперативной памяти $(ram_mb) МБ. ${FS_LABEL} запускает браузер, ему нужно от 1.5-2 ГБ.${NC}"
-        echo "Пропускаю. Если ошибка «Challenge detected» появится, запустите пункт 5 меню: он предложит добавить swap."
+        echo "Пропускаю. Если ошибка «Challenge detected» появится, запустите пункт 4 → 1: он предложит добавить swap."
         return 0
     fi
     if (( $(ram_mb) + $(swap_mb) < SWAP_NEEDED_MB )); then
@@ -685,7 +685,7 @@ install_flaresolverr() {
         echo "   Затем в панели повторите добавление/обновление трекера."
         if [[ "$FS_ENGINE" == "byparr" ]]; then
             echo "   Byparr моложе FlareSolverr: если Jackett пишет «The cookies provided by FlareSolverr are not valid»"
-            echo "   или трекер не добавляется, вернитесь на FlareSolverr (пункт 5, выбор 1)."
+            echo "   или трекер не добавляется, вернитесь на FlareSolverr (пункт 4 → 1, там выбор 1)."
         fi
     else
         echo -e "${YELLOW}В настройках Jackett (внизу страницы) впишите вручную: FlareSolverr API URL = ${FS_URL} (поле называется так же и для Byparr)${NC}"
@@ -728,7 +728,7 @@ show_status() {
         if https_active; then
             echo "HTTPS:       включён, $(https_url) (служба jackett-tls: $(systemctl is-active jackett-tls))"
         else
-            echo "HTTPS:       нет (пункт 8 меню откроет ssl.sh: там пункт 1 выпускает сертификат, пункт 2 ставит уже выпущенный)"
+            echo "HTTPS:       нет (пункт 2 → 6 откроет ssl.sh: там пункт 1 выпускает сертификат, пункт 2 ставит уже выпущенный)"
         fi
         if [[ -z "$(jq -r '.AdminPassword // empty' "$cfg")" ]]; then
             echo -e "${RED}Пароль панели НЕ задан!${NC}"
@@ -941,7 +941,7 @@ run_ssl_script() {
     echo -e "\n${YELLOW}=== Сертификат для HTTPS: переход в ssl.sh ===${NC}"
     if ! installed; then
         echo -e "${YELLOW}Jackett ещё не установлен (пункт 1): ssl.sh выпустит сертификат, но HTTPS для Jackett включится только после установки.${NC}"
-        echo "   После установки Jackett запустите пункт 8 ещё раз и выберите в ssl.sh пункт 2."
+        echo "   После установки Jackett запустите пункт 2 → 6 ещё раз и выберите в ssl.sh пункт 2."
     fi
     command -v curl &>/dev/null || apt_install_tracked curl || return 1
     local tmp
@@ -955,7 +955,7 @@ run_ssl_script() {
     echo -e "${GREEN}✅ Скачан. Запускаю (выход из ssl.sh: пункт 0, потом вы вернётесь сюда).${NC}\n"
     bash "$tmp"
     rm -f "$tmp"
-    echo -e "\n${GREEN}Вы вернулись в меню Jackett.${NC} Статус и протокол: пункт 6."
+    echo -e "\n${GREEN}Вы вернулись в меню Jackett.${NC} Адрес и протокол: пункт 2 → 5; статус: пункт 2 → 3."
     if https_active; then
         echo -e "${GREEN}HTTPS для Jackett включён: $(https_url)${NC}"
         echo "   В Oracle Cloud (Security List / NSG) порт HTTPS должен быть открыт, а порт Jackett ${DEFAULT_PORT}/tcp можно закрыть."
@@ -964,31 +964,305 @@ run_ssl_script() {
 
 # ---------------------------------------------------------------- МЕНЮ
 
-while true; do
+# Шапка: состояние Jackett, HTTPS (со ссылкой) и обходчика Cloudflare и подсказка, что делать дальше
+print_home() {
+    local jk https cf hint port cfg n pw
+    if ! installed; then
+        jk="${YELLOW}не установлен${NC}"; https="-"; cf="-"
+    else
+        port=$(get_port); cfg=$(cfg_file)
+        if systemctl is-active --quiet "$SVC"; then
+            jk="${GREEN}работает${NC} (порт ${port})"
+        else
+            jk="${RED}остановлен${NC} (порт ${port})"
+        fi
+        if https_active; then
+            if systemctl is-active --quiet jackett-tls; then
+                https="${GREEN}включён${NC} ($(https_url))"
+            else
+                https="${RED}включён, но не отвечает${NC} ($(https_url); служба jackett-tls не запущена)"
+            fi
+        else
+            https="${YELLOW}выключен${NC} (включить: пункт 2 → 6)"
+        fi
+        if command -v docker &>/dev/null && fs_container_exists; then
+            if [[ "$(docker inspect -f '{{.State.Running}}' "$FS_NAME" 2>/dev/null)" == "true" ]]; then
+                cf="${GREEN}${FS_LABEL} работает${NC}"
+            else
+                cf="${YELLOW}${FS_LABEL} остановлен${NC}"
+            fi
+        else
+            cf="${YELLOW}не установлен${NC} (нужен для трекеров с защитой Cloudflare: пункт 4 → 1)"
+        fi
+    fi
+
+    if ! installed; then
+        hint="пункт 1 (установка)."
+    elif ! systemctl is-active --quiet "$SVC"; then
+        hint="Jackett остановлен: пункт 2 → 1 (запустить)."
+    else
+        pw=""; n=0
+        if [[ -f "$cfg" ]] && command -v jq &>/dev/null; then
+            pw=$(jq -r '.AdminPassword // empty' "$cfg" 2>/dev/null)
+            n=$(ls "$(cfg_dir)/Indexers"/*.json 2>/dev/null | wc -l)
+            if [[ -z "$pw" ]]; then
+                hint="пункт 2 → 4 (задать пароль панели и API key)."
+            elif (( n == 0 )); then
+                hint="добавить трекеры в панели Jackett (Add indexer) или пункт 3 → 1 (восстановить Indexers)."
+            fi
+        fi
+        if [[ -z "$hint" ]]; then
+            if ! https_active; then
+                hint="по желанию HTTPS: пункт 2 → 6."
+            elif ! systemctl is-active --quiet jackett-tls; then
+                hint="HTTPS не отвечает: смотрите journalctl -u jackett-tls -n 30 или переустановите HTTPS: пункт 2 → 6."
+            else
+                hint="всё настроено, статус: пункт 2 → 3."
+            fi
+        fi
+    fi
+
     echo -e "\n${YELLOW}==================================================${NC}"
-    echo -e "${YELLOW}   Jackett: установка и управление   ${NC}"
+    echo -e "${YELLOW}   Jackett (Oracle)${NC}"
     echo -e "${YELLOW}==================================================${NC}"
-    echo "1. Установить / обновить Jackett"
-    echo "2. Настроить: API key, пароль панели, External access, CORS"
-    echo "3. Восстановить папку Indexers (из папки или архива)"
-    echo "4. Сохранить Indexers в архив (резервная копия)"
-    echo "5. Обход Cloudflare: установить / сменить FlareSolverr или Byparr (ошибка \"Challenge detected\")"
-    echo "6. Статус"
-    echo "7. Удаление"
-    echo "8. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
+    echo -e "Jackett:        ${jk}"
+    echo -e "HTTPS:          ${https}"
+    echo -e "Cloudflare:     ${cf}"
+    echo -e "Следующий шаг:  ${hint}"
+    echo -e "${YELLOW}==================================================${NC}"
+}
+
+jk_need_installed() {
+    installed && return 0
+    echo -e "${RED}Jackett не установлен. Установка: пункт 1.${NC}"
+    return 1
+}
+
+# Ждёт, пока панель Jackett начнёт отвечать (после запуска или перезапуска)
+wait_for_panel() {
+    local i code port
+    port=$(get_port)
+    echo -n "Жду запуска панели Jackett"
+    for i in $(seq 1 40); do
+        code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "http://127.0.0.1:${port}/UI/Dashboard" 2>/dev/null)
+        [[ -n "$code" && "$code" != "000" ]] && { echo; return 0; }
+        echo -n "."; sleep 1
+    done
+    echo
+    return 1
+}
+
+jk_start() {
+    jk_need_installed || return
+    systemctl start "$SVC"
+    sleep 1
+    if systemctl is-active --quiet "$SVC"; then
+        if wait_for_panel; then
+            echo -e "${GREEN}✅ Jackett запущен, панель отвечает.${NC}"
+        else
+            echo -e "${YELLOW}⚠️ Служба запущена, но панель пока не ответила. Проверьте позже: пункт 2 → 3.${NC}"
+        fi
+    else
+        echo -e "${RED}❌ Jackett не запустился. Смотрите: journalctl -u ${SVC} -n 30${NC}"
+    fi
+}
+
+jk_stop() {
+    jk_need_installed || return
+    systemctl stop "$SVC"
+    echo -e "${GREEN}✅ Jackett остановлен (до следующего запуска или перезагрузки сервера он не работает).${NC}"
+    if https_active; then
+        echo "   HTTPS-адрес пока будет отвечать ошибкой 502: за ним нет Jackett. Запуск: пункт 2 → 1."
+    fi
+}
+
+jk_restart() {
+    jk_need_installed || return
+    systemctl restart "$SVC"
+    sleep 1
+    if systemctl is-active --quiet "$SVC"; then
+        if wait_for_panel; then
+            echo -e "${GREEN}✅ Jackett перезапущен, панель отвечает.${NC}"
+        else
+            echo -e "${YELLOW}⚠️ Служба перезапущена, но панель пока не ответила. Проверьте позже: пункт 2 → 3.${NC}"
+        fi
+    else
+        echo -e "${RED}❌ Jackett не запустился после перезапуска. Смотрите: journalctl -u ${SVC} -n 30${NC}"
+    fi
+}
+
+# Адрес панели и API key (для Lampa, TorrServer и других программ)
+show_address() {
+    jk_need_installed || return
+    local port cfg ip k base
+    port=$(get_port); cfg=$(cfg_file)
+    echo -e "\n${YELLOW}=== Адрес и API key Jackett ===${NC}"
+    if https_active; then
+        base=$(https_url)
+        echo "Адрес панели:  ${base}"
+        echo "   (обычный HTTP снаружи закрыт; программы на самом сервере ходят по http://127.0.0.1:${port})"
+    else
+        ip=$(get_ip)
+        base="http://${ip}:${port}"
+        echo "Адрес панели:  ${base}"
+    fi
+    if [[ -f "$cfg" ]] && command -v jq &>/dev/null; then
+        k=$(jq -r '.APIKey // empty' "$cfg" 2>/dev/null)
+        echo "API key:       ${k:-не задан}"
+        echo -e "${YELLOW}   Никому не показывайте API key: с ним можно искать через ваш Jackett.${NC}"
+    else
+        echo "API key:       конфиг не найден ($(cfg_file))"
+    fi
+    echo "Torznab-адрес: ${base}/api/v2.0/indexers/all/results/torznab/"
+    echo "   (его вписывают в Lampa, TorrServer и другие программы; API key вводится в отдельное поле)"
+    echo "Пароль панели: не хранится в открытом виде; сменить: пункт 2 → 4."
+}
+
+# ---- Обход Cloudflare (FlareSolverr / Byparr)
+
+fs_need_installed() {
+    if command -v docker &>/dev/null && fs_container_exists; then return 0; fi
+    echo -e "${RED}FlareSolverr/Byparr не установлен. Установка: пункт 4 → 1.${NC}"
+    return 1
+}
+
+fs_start() {
+    fs_need_installed || return
+    local i
+    docker start "$FS_NAME" >/dev/null 2>&1 || { echo -e "${RED}❌ Не удалось запустить контейнер ${FS_NAME}. Смотрите: docker logs ${FS_NAME}${NC}"; return; }
+    echo -n "Жду запуска ${FS_LABEL} (может занять до 1.5 минут)"
+    for i in $(seq 1 45); do
+        fs_ready && { echo; echo -e "${GREEN}✅ ${FS_LABEL} запущен и отвечает (${FS_URL}).${NC}"; return; }
+        echo -n "."; sleep 2
+    done
+    echo
+    echo -e "${YELLOW}⚠️ Контейнер запущен, но ${FS_LABEL} пока не ответил. Подождите пару минут и проверьте: пункт 4 → 3.${NC}"
+}
+
+fs_stop() {
+    fs_need_installed || return
+    docker stop "$FS_NAME" >/dev/null 2>&1
+    echo -e "${GREEN}✅ ${FS_LABEL} остановлен (освобождена память).${NC}"
+    echo "   Трекеры с защитой Cloudflare пока работать не будут; трекеры без неё работают как раньше."
+    echo "   После перезагрузки сервера он сам не запустится. Включить: пункт 4 → 2."
+}
+
+fs_status() {
+    echo -e "\n${YELLOW}📊 [СТАТУС ОБХОДЧИКА CLOUDFLARE]${NC}"
+    if ! { command -v docker &>/dev/null && fs_container_exists; }; then
+        echo -e "${YELLOW}FlareSolverr/Byparr не установлен (пункт 4 → 1).${NC}"
+        return
+    fi
+    local running health cfg url
+    running=$(docker inspect -f '{{.State.Running}}' "$FS_NAME" 2>/dev/null)
+    health=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}-{{end}}' "$FS_NAME" 2>/dev/null)
+    echo "Движок:      ${FS_LABEL}"
+    echo "Контейнер:   ${FS_NAME}, $([[ "$running" == "true" ]] && echo 'запущен' || echo 'остановлен') (здоровье: ${health:--})"
+    if [[ "$running" == "true" ]]; then
+        if fs_ready; then
+            echo -e "Ответ:       ${GREEN}отвечает${NC} (${FS_URL})"
+        else
+            echo -e "Ответ:       ${RED}не отвечает${NC} (после запуска может понадобиться до 1.5 минут)"
+        fi
+        echo "Память:      $(timeout 10 docker stats --no-stream --format '{{.MemUsage}} ({{.MemPerc}})' "$FS_NAME" 2>/dev/null || echo 'нет данных')"
+    fi
+    cfg=$(cfg_file)
+    if [[ -f "$cfg" ]] && command -v jq &>/dev/null; then
+        url=$(jq -r '.FlareSolverrUrl // empty' "$cfg" 2>/dev/null)
+        echo "Адрес в Jackett: ${url:-не задан}"
+    fi
+    echo "Сервер:      RAM $(ram_mb) МБ, swap $(swap_mb) МБ"
+}
+
+# ---- Подменю
+
+jackett_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== Jackett ===${NC}"
+        if systemctl is-active --quiet "$SVC"; then
+            echo "1. Остановить Jackett"
+        else
+            echo "1. Запустить Jackett"
+        fi
+        echo "2. Перезапустить Jackett"
+        echo "3. Статус Jackett (служба, порт, HTTPS, Indexers, память)"
+        echo "4. Настроить: API key, пароль панели, External access, CORS"
+        echo "5. Показать адрес и API key"
+        echo "6. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
+        echo "0. Назад"
+        read -rp "Выберите [0-6]: " c || return
+        case "$c" in
+            1) if systemctl is-active --quiet "$SVC"; then jk_stop; else jk_start; fi ;;
+            2) jk_restart ;;
+            3) show_status ;;
+            4) configure_basic ;;
+            5) show_address ;;
+            6) run_ssl_script ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+indexers_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== Indexers (трекеры) ===${NC}"
+        echo "1. Восстановить папку Indexers (из папки или архива)"
+        echo "2. Сохранить Indexers в архив (резервная копия)"
+        echo "0. Назад"
+        read -rp "Выберите [0-2]: " c || return
+        case "$c" in
+            1) restore_indexers ;;
+            2) backup_indexers ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+cloudflare_menu() {
+    local c running
+    while true; do
+        echo -e "\n${YELLOW}=== Обход Cloudflare (FlareSolverr / Byparr) ===${NC}"
+        echo "1. Установить / сменить FlareSolverr или Byparr (ошибка \"Challenge detected\")"
+        running=""
+        command -v docker &>/dev/null && fs_container_exists && running=$(docker inspect -f '{{.State.Running}}' "$FS_NAME" 2>/dev/null)
+        if [[ "$running" == "true" ]]; then
+            echo "2. Остановить ${FS_LABEL} (освободить память)"
+        else
+            echo "2. Запустить ${FS_LABEL}"
+        fi
+        echo "3. Статус обходчика (контейнер, ответ, память)"
+        echo "0. Назад"
+        read -rp "Выберите [0-3]: " c || return
+        case "$c" in
+            1) install_flaresolverr ;;
+            2) if [[ "$running" == "true" ]]; then fs_stop; else fs_start; fi ;;
+            3) fs_status ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+while true; do
+    print_home
+    echo "1. Установка (установить / обновить Jackett)"
+    echo "2. Jackett (запуск, статус, настройка, HTTPS)"
+    echo "3. Indexers (восстановить, сохранить)"
+    echo "4. Обход Cloudflare (FlareSolverr / Byparr)"
+    echo "5. Удаление (вернуть систему к состоянию до установки)"
     echo "0. Выход"
-    echo "=================================================="
-    read -rp "Выберите действие [0-8]: " choice
+    read -rp "Выберите действие [0-5]: " choice || exit 0
 
     case $choice in
         1) install_jackett ;;
-        2) configure_basic ;;
-        3) restore_indexers ;;
-        4) backup_indexers ;;
-        5) install_flaresolverr ;;
-        6) show_status ;;
-        7) uninstall_jackett ;;
-        8) run_ssl_script ;;
+        2) jackett_menu ;;
+        3) indexers_menu ;;
+        4) cloudflare_menu ;;
+        5) uninstall_jackett ;;
         0) echo "Выход."; exit 0 ;;
         *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
     esac

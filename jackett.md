@@ -37,15 +37,25 @@
 
 ## 3. Меню
 
-1. Установить / обновить Jackett
-2. Настроить: API key, пароль панели, External access, CORS
-3. Восстановить папку Indexers (из папки или архива `.tar.gz` / `.zip`)
-4. Сохранить Indexers в архив (резервная копия)
-5. Обход Cloudflare: установить / сменить FlareSolverr или Byparr (ошибка «Challenge detected»)
-6. Статус
-7. Удаление
-8. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)
+Меню в стиле `qbittorrent.sh` / `torrserver.sh`: шапка `print_home` + главное меню 0-5 + подменю (в подменю `0` или Enter = назад, Ctrl+D тоже).
+
+**Шапка** (`print_home`): `Jackett:` (не установлен / работает (порт) / остановлен (порт)); `HTTPS:` (`-` / зелёный «включён» со ссылкой `https_url` / красный «включён, но не отвечает» при остановленной `jackett-tls` / жёлтый «выключен (включить: пункт 2 → 6)»); `Cloudflare:` (не установлен / FlareSolverr или Byparr работает / остановлен); `Следующий шаг:` по приоритету: не установлен → пункт 1; остановлен → пункт 2 → 1; пароль панели не задан → пункт 2 → 4; Indexers нет → добавить в панели или пункт 3 → 1; HTTPS включён, но `jackett-tls` не запущена → журнал и пункт 2 → 6; HTTPS выключен → по желанию пункт 2 → 6; иначе «всё настроено, статус: пункт 2 → 3».
+
+**Главное меню**
+1. Установка (установить / обновить Jackett) → `install_jackett`
+2. Jackett (запуск, статус, настройка, HTTPS) → `jackett_menu`
+3. Indexers (восстановить, сохранить) → `indexers_menu`
+4. Обход Cloudflare (FlareSolverr / Byparr) → `cloudflare_menu`
+5. Удаление (вернуть систему к состоянию до установки) → `uninstall_jackett`
 0. Выход
+
+**2. Jackett** (`jackett_menu`): 1 Остановить/Запустить (по состоянию службы; `jk_stop`/`jk_start`), 2 Перезапустить (`jk_restart`; запуск и перезапуск ждут ответа панели до 40 с, `wait_for_panel`), 3 Статус (`show_status`), 4 Настроить: API key, пароль панели, External access, CORS (`configure_basic`), 5 Показать адрес и API key (`show_address`: HTTPS-ссылка или `http://IP:порт`, API key целиком с предупреждением, Torznab-адрес), 6 Сертификат HTTPS: переход в `ssl.sh` (`run_ssl_script`).
+
+**3. Indexers** (`indexers_menu`): 1 Восстановить папку Indexers (из папки или архива `.tar.gz` / `.zip`), 2 Сохранить Indexers в архив.
+
+**4. Обход Cloudflare** (`cloudflare_menu`): 1 Установить / сменить FlareSolverr или Byparr (`install_flaresolverr`, ошибка «Challenge detected»), 2 Остановить/Запустить обходчик (`fs_stop`/`fs_start`; после остановки контейнер сам не стартует после перезагрузки сервера, из-за `--restart unless-stopped`), 3 Статус обходчика (`fs_status`: контейнер, здоровье, ответ, память, адрес в Jackett, RAM/swap).
+
+Все подсказки «пункт N» в тексте скрипта ссылаются на эти номера (например, настройка = пункт 2 → 4, HTTPS = пункт 2 → 6, обходчик = пункт 4 → 1, Indexers = пункт 3 → 1).
 
 ---
 
@@ -66,7 +76,7 @@
   - Byparr: `ghcr.io/thephaseless/byparr:latest` (браузер Camoufox, совместимый API), порог 2000, запускается с `--shm-size=512m`.
 - `analyze_system` показывает процессор, RAM/swap, диск и **рекомендует**: RAM < 1500 МБ → Byparr (FlareSolverr на такой памяти часто падает), иначе FlareSolverr (надёжнее совместим с Jackett). Предупреждения: RAM+swap < 2 ГБ (нужен swap), один слабый процессор (проверка Cloudflare может занимать > 60 с; ошибка «HttpClient.Timeout of 60 seconds» — ограничение сервера, а не движка), свободно меньше 4 ГБ диска.
 - `choose_engine`: выбор «1. FlareSolverr / 2. Byparr» (Enter = уже установленный, иначе рекомендованный). При смене движка старый контейнер удаляется, если его создал скрипт (чужой контейнер не трогается).
-- `install_flaresolverr`: при автоустановке и RAM < 1500 МБ пропускает с подсказкой запустить пункт 5; проверяет и при необходимости создаёт swap (`ensure_swap`); ставит `docker.io` (отслеживается как пакет); тянет образ, запускает контейнер `--restart unless-stopped -p 127.0.0.1:8191:8191`; ждёт готовность до 3 минут; прописывает `FlareSolverrUrl` в Jackett. Для Byparr выводится предупреждение: проект моложе, возможна ошибка «The cookies provided by FlareSolverr are not valid» (известная проблема, issue #407) — тогда вернуться на FlareSolverr (пункт 5, выбор 1).
+- `install_flaresolverr`: при автоустановке и RAM < 1500 МБ пропускает с подсказкой запустить пункт 4 → 1; проверяет и при необходимости создаёт swap (`ensure_swap`); ставит `docker.io` (отслеживается как пакет); тянет образ, запускает контейнер `--restart unless-stopped -p 127.0.0.1:8191:8191`; ждёт готовность до 3 минут; прописывает `FlareSolverrUrl` в Jackett. Для Byparr выводится предупреждение: проект моложе, возможна ошибка «The cookies provided by FlareSolverr are not valid» (известная проблема, issue #407) — тогда вернуться на FlareSolverr (пункт 5, выбор 1).
 - Проверка готовности: FlareSolverr — ответ `/` содержит `ready`; Byparr — `/docs` отдаёт 200.
 
 ### Swap (`ensure_swap`, `remove_swap`)
@@ -96,7 +106,7 @@
 - В Oracle Cloud вручную: открыть порт 9118/tcp и закрыть 9117/tcp в Security List / NSG.
 - Отключение: `ssl.sh` пункт 4 (`remove_jackett_https`) возвращает `AllowExternal`, `BaseUrlOverride` и правило UFW, удаляет службу, конфиг, копию сертификата и (если ставил) пакеты nginx и stunnel4. То же умеет пункт 7 `jackett.sh` (компонент «HTTPS-прокси»); при удалении самого Jackett прокси удаляется вместе с ним.
 - Как это учитывает `jackett.sh`: `https_active` (есть `/etc/jackett-cert/domain` и служба `jackett-tls`) и `https_url` (порт из `nginx.conf`, для старых установок из `stunnel.conf`). При включённом HTTPS пункт 2 (`configure_basic`) оставляет `AllowExternal=false`, установка не открывает порт Jackett в UFW, статус и итоговая сводка показывают адрес HTTPS, а без HTTPS подсказывают пункт 8.
-- **Пункт 8 меню (`run_ssl_script`)** сделан так же, как пункт 13 в `qbittorrent.sh`: скачивает `ssl.sh` из репозитория Vitalii (`SSL_SCRIPT_URL`, Joy096/server, ветка main) во временный файл, проверяет, что это bash-скрипт, запускает его и после выхода из `ssl.sh` (его пункт 0) возвращает в меню Jackett; если HTTPS включён, показывает его адрес. Если Jackett не установлен, предупреждает: сертификат выпустится, но HTTPS для Jackett включится только после установки (тогда запустить пункт 8 ещё раз и выбрать в `ssl.sh` пункт 2). Новые версии `ssl.sh` Vitalii загружает в репозиторий сам; блок Jackett в `ssl.sh` работает, только если в репозитории лежит версия с ним.
+- **Пункт 2 → 6 меню (`run_ssl_script`)** сделан так же, как пункт 13 в `qbittorrent.sh`: скачивает `ssl.sh` из репозитория Vitalii (`SSL_SCRIPT_URL`, Joy096/server, ветка main) во временный файл, проверяет, что это bash-скрипт, запускает его и после выхода из `ssl.sh` (его пункт 0) возвращает в меню Jackett; если HTTPS включён, показывает его адрес. Если Jackett не установлен, предупреждает: сертификат выпустится, но HTTPS для Jackett включится только после установки (тогда запустить пункт 2 → 6 ещё раз и выбрать в `ssl.sh` пункт 2). Новые версии `ssl.sh` Vitalii загружает в репозиторий сам; блок Jackett в `ssl.sh` работает, только если в репозитории лежит версия с ним.
 
 ---
 
@@ -114,3 +124,4 @@
 - 28.10.2026: по просьбе Vitalii в `ssl.sh` убраны строки про закрытый HTTP и про открытие порта HTTPS / закрытие порта Jackett в Oracle Security List (блок Jackett), а также строка про порт в Security List в блоке TorrServer. В блоке Jackett добавлена подсказка: если ссылка сразу не открылась, подождать 1-2 минуты (Jackett после перезапуска стартует не сразу). `jackett.sh` не менялся. Резервная копия: `ssl.before_msgs.sh`. Актуальный `ssl.sh` с этими правками уже лежит в проекте.
 - 28.10.2026: итоги проверки Cloudflare на Micro (1 ЦП, ~1 ГБ RAM, своп занят): Rutracker отвечает проверкой Cloudflare (`cf-mitigated: challenge`), Byparr ждёт 120-184 с и сдаётся (`Timed out while loading the page or solving the challenge`), не проходит и тестовую страницу Cloudflare. Таймаут Jackett 60 с изменить нельзя. Byparr исправен (контейнер запущен, `/health` 200, без перезапусков и OOM), проблема в нехватке ресурсов Micro и в строгости проверки для IP дата-центра. Рекомендация: обходчик на Ampere (Vitalii планирует взять сервер 1 ЦП / 6 ГБ, потом 3 ЦП / 18 ГБ или увеличить размер до 4 ЦП / 24 ГБ через Edit shape) и прописать его адрес в `FlareSolverrUrl`; на Micro Byparr остановить (`docker stop byparr`). Образ Byparr для ARM проверить при установке.
 - 28.10.2026: у Vitalii подключены индексеры `rutor` и `toloka` (сайты отвечают кодом 200 за 0,2 с без обходчика; Jackett по `https://домен:9118/api/v2.0/indexers/all/results` отвечает 200, CORS `access-control-allow-origin: *`). Jackett работает от пользователя `ubuntu`, конфиг лежит в `/home/ubuntu/.config/Jackett/ServerConfig.json`, пользователь определяется командой `systemctl show -p User --value jackett`. Лампа показывала «Парсер не отвечает на запрос» при рабочем сервере, причина на стороне настроек Лампы (адрес, ключ), на момент записи не выяснена.
+- 31.10.2026: меню переделано в стиль `qbittorrent.sh`: шапка `print_home` (Jackett, HTTPS со ссылкой, Cloudflare, «Следующий шаг»), главное меню 0-5, подменю «Jackett», «Indexers», «Обход Cloudflare». Новое: запуск/остановка/перезапуск Jackett, показ адреса и API key (с Torznab-адресом), запуск/остановка и статус обходчика Cloudflare. Все «пункт N» в тексте обновлены. Резервная копия: `jackett.before_menu.sh`. Протестировано на заглушках (systemctl, docker, curl, getent).
