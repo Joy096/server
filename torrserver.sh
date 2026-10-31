@@ -1311,7 +1311,7 @@ ts_installed() { systemctl cat "${TS_SVC}.service" &>/dev/null; }
 
 # Шапка: состояние TorrServer, VPN и HTTPS и подсказка, что делать дальше
 print_home() {
-    local ts vpn https hint tun prot
+    local ts vpn https hint tun prot dom
     detect_port
     detect_ssl_port
     if ! ts_installed; then
@@ -1331,9 +1331,10 @@ print_home() {
     if ! ts_installed; then
         https="-"
     elif [[ -n "$SSL_PORT" ]]; then
-        https="${GREEN}включён${NC} (порт ${SSL_PORT})"
+        dom=$(cat "${CERT_DIR}/domain" 2>/dev/null)
+        https="${GREEN}включён${NC} (https://${dom:-домен}:${SSL_PORT})"
     else
-        https="${YELLOW}выключен${NC}"
+        https="${YELLOW}выключен${NC} (включить: пункт 3 → 5)"
     fi
     if ! ts_installed; then
         hint="пункт 1 (установка)."
