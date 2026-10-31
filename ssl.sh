@@ -1,16 +1,5 @@
 #!/bin/bash
 
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
-
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
-
-if [[ $EUID -ne 0 ]]; then
-    echo "❌ Этот скрипт должен выполняться от root!"
-    exit 1
-fi
-
 # Цвета для сообщений
 green='\033[0;32m'
 red='\033[0;31m'
@@ -143,10 +132,10 @@ ensure_desec_challenge_cname() {
 create_renew_hook() {
     local domain=$1
     LOGI "Создаем/Обновляем универсальный hook-скрипт: ${HOOK_SCRIPT_PATH}"
-    
+
     echo "#!/bin/bash" > "${HOOK_SCRIPT_PATH}"
     echo "DOMAIN=\"${domain}\"" >> "${HOOK_SCRIPT_PATH}"
-    
+
     cat << 'EOF' >> "${HOOK_SCRIPT_PATH}"
 LOG_FILE="/root/acme_renew.log"
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "${LOG_FILE}"; }
@@ -166,13 +155,13 @@ if [ -d "/var/snap/nextcloud/" ]; then
     log "2. Обнаружен Nextcloud. Устанавливаем сертификат..."
     mkdir -p "${NEXTCLOUD_CERT_DIR}"
     /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --cert-file "${NEXTCLOUD_CERT_DIR}/cert.pem" --key-file "${NEXTCLOUD_CERT_DIR}/private.key" --fullchain-file "${NEXTCLOUD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
-    
+
     log "Добавляем ${DOMAIN} в trusted_domains Nextcloud..."
     /snap/bin/nextcloud.occ config:system:set trusted_domains 1 --value="${DOMAIN}" >> "${LOG_FILE}" 2>&1
 
     log "Прописываем сертификаты в конфигурацию Apache..."
     /snap/bin/nextcloud.enable-https custom "${NEXTCLOUD_CERT_DIR}/cert.pem" "${NEXTCLOUD_CERT_DIR}/private.key" "${NEXTCLOUD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
-    
+
     log "Перезапускаем Nextcloud..."
     snap restart nextcloud >> "${LOG_FILE}" 2>&1
 else
@@ -183,7 +172,7 @@ if [ -d "/var/snap/adguard-home/" ]; then
     log "3. Обнаружен AdGuard Home. Устанавливаем сертификат..."
     mkdir -p "${ADGUARD_CERT_DIR}"
     /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${ADGUARD_CERT_DIR}/private.key" --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
-    
+
     AGH_CONFIG="/var/snap/adguard-home/current/AdGuardHome.yaml"
     if [ -f "$AGH_CONFIG" ]; then
         log "Прописываем новый домен в конфигурации AdGuard Home..."
@@ -373,7 +362,7 @@ if systemctl cat torrserver.service >/dev/null 2>&1; then
                         TS_HTTP_PORT=$(grep -oP '(?<=--port )\d+' "${TS_CONF}" | head -n 1)
                         TS_HTTP_PORT="${TS_HTTP_PORT:-8090}"
                         echo "   Обычный HTTP продолжает работать как раньше, без шифрования: http://IP-сервера:${TS_HTTP_PORT}"
-                        echo "   Порт ${TS_SSL_PORT}/tcp откройте ещё и в Security List / NSG в консоли Oracle Cloud, если не открывали."
+                        echo "   В приложениях (TS на телефоне/ТВ и др.) указывайте адрес сервера с https://"
                         ;;
                 esac
             else
@@ -392,6 +381,245 @@ else
     log "6. TorrServer не найден, пропускаем."
 fi
 
+# Jackett сам HTTPS не умеет (слушает только http://), поэтому перед ним ставится обратный прокси nginx:
+# HTTPS на порту 9118 -> Jackett на 127.0.0.1:9117. Прокси передаёт Host и "X-Forwarded-Proto: https": без них Jackett
+# после входа перенаправляет браузер на http://, а на порту HTTPS обычный HTTP не работает (соединение сбрасывается).
+# Это отдельный экземпляр nginx со своим конфигом и службой jackett-tls: другие сайты на сервере не затрагиваются.
+# Обычный HTTP снаружи закрывается.
+jackett_https() {
+    local cert_dir="/etc/jackett-cert" unit="/etc/systemd/system/jackett-tls.service"
+    local conf="/etc/jackett-cert/nginx.conf"
+    local user cfg jk_port tls_port bin i code loc tmp polrc=0 was=0 edited=0 cur_url prev_url old_url
+
+    user=$(systemctl show -p User --value jackett 2>/dev/null)
+    if [ -z "${user}" ] || ! id -u "${user}" >/dev/null 2>&1; then user=root; fi
+    cfg="$(getent passwd "${user}" | cut -d: -f6)/.config/Jackett/ServerConfig.json"
+    if [ ! -s "${cfg}" ]; then
+        log "Jackett: нет ${cfg}, HTTPS не включаю."
+        echo -e "\033[0;31m❌ Jackett: не нашёл настройки (${cfg}), HTTPS не включён. Запустите службу Jackett один раз и повторите.\033[0m"
+        return 1
+    fi
+    if ! command -v jq >/dev/null 2>&1; then
+        log "Jackett: не установлен jq, HTTPS не включаю."
+        echo -e "\033[0;31m❌ Jackett: не найден jq (его ставит jackett.sh), HTTPS не включён.\033[0m"
+        return 1
+    fi
+
+    # 1. Копия сертификата именно для Jackett (в /root у служб доступа нет)
+    mkdir -p "${cert_dir}"
+    /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${cert_dir}/private.key" --fullchain-file "${cert_dir}/fullchain.pem" >> "${LOG_FILE}" 2>&1
+    if [ ! -s "${cert_dir}/fullchain.pem" ] || [ ! -s "${cert_dir}/private.key" ]; then
+        log "Jackett: сертификат не удалось скопировать в ${cert_dir}, HTTPS не включаю."
+        echo -e "\033[0;31m❌ Jackett: не удалось скопировать сертификат, HTTPS не включён. Подробности: ${LOG_FILE}\033[0m"
+        return 1
+    fi
+    echo "${DOMAIN}" > "${cert_dir}/domain"
+    chown -R root:root "${cert_dir}"
+    chmod 700 "${cert_dir}"
+    chmod 600 "${cert_dir}/private.key"
+    chmod 644 "${cert_dir}/fullchain.pem" "${cert_dir}/domain"
+
+    # 2. nginx (если пакета не было, ставим и запоминаем: при удалении уберём)
+    bin=$(command -v nginx)
+    if [ -z "${bin}" ]; then
+        log "Jackett: ставлю пакет nginx..."
+        apt-get update >> "${LOG_FILE}" 2>&1
+        # Пакет при установке сам запускает свой nginx с сайтом на порту 80. Он нам не нужен: на время установки запрещаем запуск служб
+        if [ ! -e /usr/sbin/policy-rc.d ]; then
+            printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d
+            chmod +x /usr/sbin/policy-rc.d
+            polrc=1
+        fi
+        DEBIAN_FRONTEND=noninteractive apt-get install -y nginx >> "${LOG_FILE}" 2>&1
+        [ "${polrc}" = "1" ] && rm -f /usr/sbin/policy-rc.d
+        bin=$(command -v nginx)
+        if [ -z "${bin}" ]; then
+            log "Jackett: не удалось установить nginx."
+            echo -e "\033[0;31m❌ Jackett: не удалось установить nginx, HTTPS не включён. Подробности: ${LOG_FILE}\033[0m"
+            return 1
+        fi
+        systemctl disable nginx >> "${LOG_FILE}" 2>&1      # стандартная служба nginx не нужна, работает только jackett-tls
+        : > "${cert_dir}/pkg_nginx_added"
+    fi
+
+    # 3. Порты: Jackett (из его настроек) и HTTPS (если уже был задан, оставляем, иначе 9118)
+    jk_port=$(jq -r '.Port // 9117' "${cfg}" 2>/dev/null)
+    jk_port="${jk_port:-9117}"
+    tls_port=$(awk '$1=="listen"{print $2; exit}' "${conf}" 2>/dev/null)
+    [ -n "${tls_port}" ] || tls_port=$(awk '$1=="accept"{print $3; exit}' "${cert_dir}/stunnel.conf" 2>/dev/null)
+    tls_port="${tls_port:-9118}"
+    if ! systemctl is-active --quiet jackett-tls && ss -ltn 2>/dev/null | grep -q ":${tls_port} "; then
+        log "Jackett: порт ${tls_port} занят другой программой, HTTPS не включаю."
+        echo -e "\033[0;31m❌ Jackett: порт ${tls_port} уже занят другой программой, HTTPS не включён.\033[0m"
+        return 1
+    fi
+
+    # 4. Конфиг nginx и служба jackett-tls
+    {
+        if id -u www-data >/dev/null 2>&1; then echo "user www-data;"; fi
+        echo "worker_processes 1;"
+        echo "daemon off;"
+        echo "pid /run/jackett-nginx.pid;"
+        echo "error_log stderr warn;"
+        echo "events { worker_connections 512; }"
+        echo "http {"
+        echo "    access_log off;"
+        echo "    server_tokens off;"
+        echo "    server {"
+        echo "        listen ${tls_port} ssl;"
+        echo "        server_name _;"
+        echo "        ssl_certificate ${cert_dir}/fullchain.pem;"
+        echo "        ssl_certificate_key ${cert_dir}/private.key;"
+        echo "        ssl_protocols TLSv1.2 TLSv1.3;"
+        echo "        client_max_body_size 50m;"
+        echo "        location / {"
+        echo "            proxy_pass http://127.0.0.1:${jk_port};"
+        echo "            proxy_http_version 1.1;"
+        echo '            proxy_set_header Host $http_host;'
+        echo '            proxy_set_header X-Forwarded-For $remote_addr;'
+        echo "            proxy_set_header X-Forwarded-Proto https;"
+        echo "            proxy_read_timeout 300s;"
+        echo "        }"
+        echo "    }"
+        echo "}"
+    } > "${conf}"
+    chmod 600 "${conf}"
+    if ! "${bin}" -t -c "${conf}" >> "${LOG_FILE}" 2>&1; then
+        log "Jackett: nginx не принял конфиг ${conf}."
+        echo -e "\033[0;31m❌ Jackett: nginx не принял конфиг (${conf}), HTTPS не включён. Подробности: ${LOG_FILE}\033[0m"
+        return 1
+    fi
+    {
+        echo "[Unit]"
+        echo "Description=Jackett HTTPS (nginx)"
+        echo "After=network-online.target jackett.service"
+        echo "Wants=network-online.target"
+        echo ""
+        echo "[Service]"
+        echo "ExecStartPre=${bin} -t -c ${conf}"
+        echo "ExecStart=${bin} -c ${conf}"
+        echo "Restart=on-failure"
+        echo "RestartSec=5"
+        echo ""
+        echo "[Install]"
+        echo "WantedBy=multi-user.target"
+    } > "${unit}"
+    systemctl daemon-reload >> "${LOG_FILE}" 2>&1
+    systemctl enable jackett-tls >> "${LOG_FILE}" 2>&1
+    log "Перезапускаем jackett-tls..."
+    systemctl restart jackett-tls >> "${LOG_FILE}" 2>&1
+
+    # Прежняя версия (до nginx) работала через stunnel: убираем его конфиг и, если пакет ставил ssl.sh, сам пакет
+    rm -f "${cert_dir}/stunnel.conf"
+    if [ -f "${cert_dir}/pkg_stunnel_added" ]; then
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y stunnel4 >> "${LOG_FILE}" 2>&1
+        rm -f "${cert_dir}/pkg_stunnel_added"
+    fi
+
+    # 5. Порт HTTPS в UFW (запоминаем, только если такого правила не было: при удалении закроем именно его)
+    if command -v ufw >/dev/null 2>&1; then
+        if ! ufw show added 2>/dev/null | grep -qxF "ufw allow ${tls_port}/tcp"; then
+            if ufw allow "${tls_port}/tcp" >> "${LOG_FILE}" 2>&1; then
+                echo "${tls_port}" > "${cert_dir}/ufw_port"
+                log "Jackett: порт ${tls_port}/tcp открыт в UFW."
+            fi
+        fi
+    fi
+
+    # 6. HTTPS должен отвечать, пока обычный HTTP ещё не закрыт
+    code=""
+    for i in $(seq 1 30); do
+        code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "https://127.0.0.1:${tls_port}/UI/Dashboard" 2>/dev/null)
+        case "${code}" in ""|000) ;; *) break ;; esac
+        sleep 1
+    done
+    case "${code}" in
+        ""|000)
+            log "Jackett: HTTPS не ответил за 30 секунд. Смотрите: journalctl -u jackett-tls -n 30 и systemctl status jackett"
+            echo -e "\033[0;31m❌ Jackett: HTTPS не ответил за 30 секунд, обычный HTTP не закрываю. Смотрите: journalctl -u jackett-tls -n 30 и systemctl status jackett\033[0m"
+            return 1
+            ;;
+    esac
+    # Самопроверка: адрес, на который Jackett перенаправляет браузер (например, на страницу входа), должен начинаться с https://.
+    # Иначе браузер уйдёт на http:// порта HTTPS и получит «соединение сброшено». Пока HTTP не закрыт, можно безопасно остановиться.
+    loc=$(curl -sk -D - -o /dev/null --max-time 5 -H "Host: ${DOMAIN}:${tls_port}" "https://127.0.0.1:${tls_port}/UI/Dashboard" 2>/dev/null | tr -d '\r' | awk 'tolower($1)=="location:"{print $2; exit}')
+    case "${loc}" in
+        http://*)
+            log "Jackett: перенаправление идёт на ${loc} (не https), обычный HTTP не закрываю."
+            echo -e "\033[0;31m❌ Jackett перенаправляет на ${loc}: браузер не сможет войти по HTTPS. Обычный HTTP не закрываю. Пришлите вывод: curl -vk https://127.0.0.1:${tls_port}/UI/Dashboard\033[0m"
+            return 1
+            ;;
+    esac
+
+    # 7. Закрываем обычный HTTP снаружи: Jackett слушает только 127.0.0.1.
+    # Прежние значения запоминаем, чтобы при удалении HTTPS всё вернуть как было.
+    [ -f "${cert_dir}/prev_allow_external" ] || jq -r '.AllowExternal | tostring' "${cfg}" > "${cert_dir}/prev_allow_external"
+    [ -f "${cert_dir}/prev_base_url" ] || jq -r '.BaseUrlOverride // ""' "${cfg}" > "${cert_dir}/prev_base_url"
+    # Прежняя версия (до nginx) прописывала адрес https://домен:порт в Base URL override: он больше не нужен, возвращаем прежнее значение
+    old_url="https://${DOMAIN}:${tls_port}"
+    cur_url=$(jq -r '.BaseUrlOverride // ""' "${cfg}")
+    prev_url=$(cat "${cert_dir}/prev_base_url" 2>/dev/null)
+    if [ "$(jq -r '.AllowExternal | tostring' "${cfg}")" != "false" ] \
+        || [ "${cur_url}" = "${old_url}" ] \
+        || [ -z "$(jq -r '.LocalBindAddress // empty' "${cfg}")" ]; then
+        systemctl is-active --quiet jackett && was=1
+        systemctl stop jackett >> "${LOG_FILE}" 2>&1
+        tmp=$(mktemp)
+        if jq --arg old "${old_url}" --arg prev "${prev_url}" '.AllowExternal=false | .LocalBindAddress=(if (.LocalBindAddress // "") == "" then "127.0.0.1" else .LocalBindAddress end) | .BaseUrlOverride=(if .BaseUrlOverride == $old then $prev else .BaseUrlOverride end)' "${cfg}" > "${tmp}" 2>/dev/null && [ -s "${tmp}" ]; then
+            cat "${tmp}" > "${cfg}"      # cat сохраняет владельца и права файла
+            edited=1
+        else
+            log "Jackett: не удалось изменить ${cfg}."
+        fi
+        rm -f "${tmp}"
+        if [ "${was}" = "1" ]; then
+            log "Запускаем Jackett..."
+            systemctl start jackett >> "${LOG_FILE}" 2>&1
+        fi
+    fi
+    if [ "${was}" = "1" ]; then
+        code=""
+        for i in $(seq 1 30); do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "https://127.0.0.1:${tls_port}/UI/Dashboard" 2>/dev/null)
+            case "${code}" in ""|000) ;; *) break ;; esac
+            sleep 1
+        done
+    fi
+
+    # 8. Проверка: HTTPS отвечает, а порт Jackett слушает только localhost
+    case "${code}" in
+        ""|000)
+            log "Jackett: после закрытия HTTP адрес HTTPS не ответил. Смотрите: journalctl -u jackett-tls -n 30 и journalctl -u jackett -n 30"
+            echo -e "\033[0;31m❌ Jackett: HTTPS не ответил после перезапуска Jackett. Смотрите: journalctl -u jackett-tls -n 30 и journalctl -u jackett -n 30\033[0m"
+            return 1
+            ;;
+    esac
+    if ss -ltn 2>/dev/null | awk -v p=":${jk_port}" '$4 ~ p"$" && $4 !~ /^127\.0\.0\.1:/ {f=1} END{exit !f}'; then
+        log "Jackett: порт ${jk_port} всё ещё слушает не только localhost."
+        echo -e "\033[1;33m⚠️ Jackett: порт ${jk_port} всё ещё слушает снаружи (настройки изменены: ${edited}). Проверьте AllowExternal в ${cfg}.\033[0m"
+    else
+        # Обычный HTTP снаружи закрыт: убираем и правило UFW (запоминаем, чтобы вернуть при удалении HTTPS)
+        if command -v ufw >/dev/null 2>&1 && ufw show added 2>/dev/null | grep -qxF "ufw allow ${jk_port}/tcp"; then
+            if ufw --force delete allow "${jk_port}/tcp" >> "${LOG_FILE}" 2>&1; then
+                echo "${jk_port}" > "${cert_dir}/ufw_closed_port"
+                log "Jackett: правило UFW для порта ${jk_port}/tcp удалено."
+            fi
+        fi
+    fi
+
+    log "Jackett: HTTPS включён, адрес: https://${DOMAIN}:${tls_port}"
+    echo -e "\033[0;32m✅ Jackett: HTTPS включён. Заходите по адресу: https://${DOMAIN}:${tls_port}\033[0m"
+    echo "   Если ссылка сразу не открылась, подождите 1-2 минуты и обновите страницу: Jackett после перезапуска запускается не сразу."
+    return 0
+}
+
+if systemctl cat jackett.service >/dev/null 2>&1; then
+    log "7. Обнаружен Jackett. Устанавливаем сертификат и включаем HTTPS (через nginx)..."
+    jackett_https
+else
+    log "7. Jackett не найден, пропускаем."
+fi
+
 log "====== Развертывание для ${DOMAIN} завершено. ======"; echo "" >> "${LOG_FILE}"
 EOF
     chmod +x "${HOOK_SCRIPT_PATH}"
@@ -401,7 +629,7 @@ EOF
 # --- Выбор провайдера и получение credentials ---
 select_dns_provider() {
     local mode=$1  # "issue" или "sync"
-    
+
     echo -e "${yellow}================================================================${plain}"
     echo -e "${yellow}       Выберите DNS-провайдера для выпуска сертификата:      ${plain}"
     echo -e "${yellow}================================================================${plain}"
@@ -577,28 +805,28 @@ ssl_cert_issue_and_deploy() {
 
     issue_certificate "${TARGET_DOMAIN}" "${HOOK_SCRIPT_PATH}" ""
 
-    if [[ $? -ne 0 ]]; then 
+    if [[ $? -ne 0 ]]; then
         LOGE "Ошибка выпуска сертификата"
         exit 1
     fi
-    
+
     ~/.acme.sh/acme.sh --upgrade --auto-upgrade
 
     LOGI "Первичная установка сертификата во все обнаруженные службы..."
     "${HOOK_SCRIPT_PATH}" "${TARGET_DOMAIN}"
-    
+
     echo -e "\n✅ ${green}Готово! Сертификат выпущен и автоматически развернут.${plain}"
 }
 
 sync_certificates() {
     LOGI "Синхронизация сертификатов с установленными приложениями..."
     CERT_BASE_DIR="/root/my_cert"
-    
+
     if [[ ! -d "${CERT_BASE_DIR}" || -z "$(ls -A ${CERT_BASE_DIR})" ]]; then
         LOGE "Сертификаты еще не были выпущены. Сначала выполните пункт 1."
         return
     fi
-    
+
     local domain
     domain=$(ls -t "${CERT_BASE_DIR}" | head -n 1)
 
@@ -696,10 +924,73 @@ remove_torrserver_https() {
     rm -rf "${ts_cert_dir}"
 }
 
+# Выключает HTTPS-прокси Jackett (nginx), возвращает прежние настройки Jackett (обычный HTTP снаружи),
+# закрывает порт HTTPS в UFW (если его открыл ssl.sh), возвращает правило UFW для порта Jackett и удаляет копию сертификата
+remove_jackett_https() {
+    local cert_dir="/etc/jackett-cert"
+    local unit="/etc/systemd/system/jackett-tls.service"
+    local user cfg prev_ext prev_url uport cport tmp was=0 restored=0
+    [[ -d "${cert_dir}" || -f "${unit}" ]] || return 0
+    LOGD "Отключаем HTTPS в Jackett и удаляем его копию сертификата..."
+
+    systemctl stop jackett-tls >/dev/null 2>&1
+    systemctl disable jackett-tls >/dev/null 2>&1
+    rm -f "${unit}"
+    systemctl daemon-reload >/dev/null 2>&1
+
+    # Настройки Jackett: возвращаем то, что было до HTTPS
+    if systemctl cat jackett.service >/dev/null 2>&1 && command -v jq >/dev/null 2>&1 && [[ -f "${cert_dir}/prev_allow_external" ]]; then
+        user=$(systemctl show -p User --value jackett 2>/dev/null)
+        if [[ -z "${user}" ]] || ! id -u "${user}" >/dev/null 2>&1; then user=root; fi
+        cfg="$(getent passwd "${user}" | cut -d: -f6)/.config/Jackett/ServerConfig.json"
+        if [[ -s "${cfg}" ]]; then
+            prev_ext=$(cat "${cert_dir}/prev_allow_external" 2>/dev/null)
+            [[ "${prev_ext}" == "false" ]] || prev_ext=true
+            prev_url=$(cat "${cert_dir}/prev_base_url" 2>/dev/null)
+            systemctl is-active --quiet jackett && was=1
+            systemctl stop jackett >/dev/null 2>&1
+            tmp=$(mktemp)
+            if jq --argjson e "${prev_ext}" --arg u "${prev_url}" '.AllowExternal=$e | .BaseUrlOverride=$u' "${cfg}" > "${tmp}" 2>/dev/null && [[ -s "${tmp}" ]]; then
+                cat "${tmp}" > "${cfg}"      # cat сохраняет владельца и права файла
+                restored=1
+            else
+                LOGE "Не удалось вернуть настройки Jackett в ${cfg}. Проверьте AllowExternal и Base URL override вручную."
+            fi
+            rm -f "${tmp}"
+            (( was )) && systemctl start jackett >/dev/null 2>&1
+            (( restored )) && LOGI "Jackett: настройки возвращены, веб-интерфейс снова работает по http:// (AllowExternal=${prev_ext})."
+        fi
+    fi
+
+    if command -v ufw >/dev/null 2>&1; then
+        uport=$(cat "${cert_dir}/ufw_port" 2>/dev/null)
+        if [[ -n "${uport}" ]]; then
+            ufw --force delete allow "${uport}/tcp" >/dev/null 2>&1
+            LOGD "Порт ${uport}/tcp в UFW закрыт. В Security List / NSG Oracle Cloud его закройте вручную."
+        fi
+        cport=$(cat "${cert_dir}/ufw_closed_port" 2>/dev/null)
+        if [[ -n "${cport}" ]] && systemctl cat jackett.service >/dev/null 2>&1; then
+            ufw allow "${cport}/tcp" >/dev/null 2>&1
+            LOGD "Порт ${cport}/tcp в UFW открыт обратно (как было до HTTPS). В Security List / NSG Oracle Cloud откройте его вручную, если нужен доступ по HTTP."
+        fi
+    fi
+
+    if [[ -f "${cert_dir}/pkg_nginx_added" ]]; then
+        LOGD "Удаляем пакет nginx (его поставил ssl.sh)..."
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y 'nginx*' >/dev/null 2>&1
+    fi
+    if [[ -f "${cert_dir}/pkg_stunnel_added" ]]; then
+        LOGD "Удаляем пакет stunnel4 (его поставила прежняя версия ssl.sh)..."
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y stunnel4 >/dev/null 2>&1
+    fi
+    rm -rf "${cert_dir}"
+}
+
 remove_acme() {
     LOGI "Начинаем удаление acme.sh..."
     remove_qbittorrent_https
     remove_torrserver_https
+    remove_jackett_https
     if [ -f "$HOME/.acme.sh/acme.sh" ]; then
         ~/.acme.sh/acme.sh --uninstall
         LOGI "acme.sh и задача cron успешно удалены."
@@ -710,7 +1001,7 @@ remove_acme() {
     LOGD "Удаляем оставшиеся файлы и папки..."
     rm -rf "$HOME/.acme.sh"
     rm -rf "/root/my_cert"
-    
+
     if [ -f "${HOOK_SCRIPT_PATH}" ]; then
         rm -f "${HOOK_SCRIPT_PATH}"
         LOGI "Удален hook-скрипт: ${HOOK_SCRIPT_PATH}"
@@ -730,6 +1021,144 @@ show_cert_path() {
     find "${CERT_BASE_DIR}" -type f -printf "   %p\n"
 }
 
+# --- СТАТУС ПРОГРАММ И HTTPS ---
+APPS_LIST=("Nextcloud" "AdGuard Home" "3X-UI" "qBittorrent" "TorrServer" "Jackett")
+
+# Отвечает ли порт по HTTPS (проверка с самого сервера, имя в сертификате не проверяем)
+https_answers() {
+    local c
+    c=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 "https://127.0.0.1:$1/" 2>/dev/null)
+    case "${c}" in ""|000) return 1 ;; *) return 0 ;; esac
+}
+
+# Определяет по настройкам программы $1: APP_STATE = none (не установлена) | off | on | unknown, APP_PORT = порт HTTPS (если известен)
+app_https_state() {
+    local name="$1" f v en pt out
+    APP_STATE="none"; APP_PORT=""
+    case "${name}" in
+        "Nextcloud")
+            [[ -d /var/snap/nextcloud/ ]] || return 0
+            APP_STATE="off"
+            APP_PORT=$(snap get nextcloud ports.https 2>/dev/null | head -n 1)
+            [[ "${APP_PORT}" =~ ^[0-9]+$ ]] || APP_PORT=443
+            if [[ -s /var/snap/nextcloud/current/certs/custom/fullchain.pem ]] || [[ -n "$(ls -A /var/snap/nextcloud/current/certs/live 2>/dev/null)" ]]; then
+                APP_STATE="on"
+            fi
+            ;;
+        "AdGuard Home")
+            [[ -d /var/snap/adguard-home/ ]] || return 0
+            APP_STATE="off"; APP_PORT=443
+            f="/var/snap/adguard-home/current/AdGuardHome.yaml"
+            if [[ -f "${f}" ]]; then
+                v=$(awk '/^tls:/{t=1;next} t&&/^[^[:space:]#]/{t=0} t&&$1=="enabled:"{e=$2} t&&$1=="port_https:"{p=$2} END{print e" "p}' "${f}" 2>/dev/null)
+                read -r en pt <<< "${v}"
+                [[ "${pt}" =~ ^[0-9]+$ ]] && APP_PORT="${pt}"
+                [[ "${en}" == "true" && "${pt}" != "0" ]] && APP_STATE="on"
+            fi
+            ;;
+        "3X-UI")
+            [[ -f /usr/local/x-ui/x-ui ]] || return 0
+            APP_STATE="unknown"
+            out=$(timeout 10 /usr/local/x-ui/x-ui setting -getCert true 2>/dev/null)
+            if echo "${out}" | grep -qiE '^[[:space:]]*cert[[:space:]]*:'; then
+                v=$(echo "${out}" | grep -oiP '^\s*cert\s*:\s*\K.*' | head -n 1 | tr -d '[:space:]')
+                if [[ -n "${v}" ]]; then APP_STATE="on"; else APP_STATE="off"; fi
+                if [[ "${APP_STATE}" == "on" ]]; then
+                    APP_PORT=$(timeout 10 /usr/local/x-ui/x-ui setting -show true 2>/dev/null | grep -oiP '^\s*port\s*:\s*\K\d+' | head -n 1)
+                fi
+            fi
+            ;;
+        "qBittorrent")
+            [[ -f /etc/systemd/system/qbittorrent.service ]] || return 0
+            APP_STATE="off"
+            f="/home/qbittorrent/.config/qBittorrent/qBittorrent.conf"
+            if [[ -f "${f}" ]] && grep -q '^WebUI\\HTTPS\\Enabled=true' "${f}"; then
+                APP_STATE="on"
+                APP_PORT=$(grep -oP '^WebUI\\Port=\K[0-9]+' "${f}" | head -n 1)
+                APP_PORT="${APP_PORT:-8080}"
+            fi
+            ;;
+        "TorrServer")
+            systemctl cat torrserver.service >/dev/null 2>&1 || return 0
+            APP_STATE="off"
+            f="/opt/torrserver/torrserver.config"
+            if [[ -f "${f}" ]] && grep -qE '^DAEMON_OPTIONS=.*--ssl([[:space:]"'"'"']|$)' "${f}"; then
+                APP_STATE="on"
+                APP_PORT=$(grep -oP '(?<=--sslport )\d+' "${f}" | head -n 1)
+                APP_PORT="${APP_PORT:-8091}"
+            fi
+            ;;
+        "Jackett")
+            systemctl cat jackett.service >/dev/null 2>&1 || return 0
+            APP_STATE="off"
+            if [[ -f /etc/systemd/system/jackett-tls.service && -f /etc/jackett-cert/domain ]]; then
+                APP_STATE="on"
+                APP_PORT=$(awk '$1=="listen"{print $2; exit}' /etc/jackett-cert/nginx.conf 2>/dev/null)
+                APP_PORT="${APP_PORT:-9118}"
+            fi
+            ;;
+    esac
+}
+
+# Считает программы: APPS_INST (установлено) и APPS_HTTPS (из них с включённым HTTPS). Порты и ответы не проверяет.
+count_apps_https() {
+    local n
+    APPS_INST=0; APPS_HTTPS=0
+    for n in "${APPS_LIST[@]}"; do
+        app_https_state "$n"
+        [[ "${APP_STATE}" == "none" ]] && continue
+        APPS_INST=$((APPS_INST + 1))
+        [[ "${APP_STATE}" == "on" ]] && APPS_HTTPS=$((APPS_HTTPS + 1))
+    done
+}
+
+# Одна строка для шапки меню
+print_apps_summary() {
+    count_apps_https
+    if (( APPS_INST == 0 )); then
+        echo " Программы с HTTPS: подходящих программ на сервере не найдено"
+    elif (( APPS_HTTPS == APPS_INST )); then
+        echo -e " Программы с HTTPS: ${green}${APPS_HTTPS} из ${APPS_INST}${plain} установленных (подробно: пункт 5)"
+    else
+        echo -e " Программы с HTTPS: ${yellow}${APPS_HTTPS} из ${APPS_INST}${plain} установленных (подробно: пункт 5)"
+    fi
+}
+
+# Пункт 5: таблица по всем программам, которые знает скрипт
+show_apps_status() {
+    local n pad st
+    echo ""
+    LOGI "Программы на этом сервере и HTTPS:"
+    echo ""
+    for n in "${APPS_LIST[@]}"; do
+        app_https_state "$n"
+        printf -v pad '%-14s' "$n"
+        case "${APP_STATE}" in
+            none)
+                echo -e " ${pad}не установлен   -"
+                continue
+                ;;
+        esac
+        st="установлен      "
+        case "${APP_STATE}" in
+            on)
+                if [[ -n "${APP_PORT}" ]] && ! https_answers "${APP_PORT}"; then
+                    echo -e " ${pad}${st}${red}HTTPS: включён (${APP_PORT}), но не отвечает${plain}"
+                elif [[ -n "${APP_PORT}" ]]; then
+                    echo -e " ${pad}${st}${green}HTTPS: включён (${APP_PORT})${plain}"
+                else
+                    echo -e " ${pad}${st}${green}HTTPS: включён${plain}"
+                fi
+                ;;
+            off)     echo -e " ${pad}${st}${yellow}HTTPS: выключен${plain}" ;;
+            *)       echo -e " ${pad}${st}${yellow}HTTPS: неизвестно${plain}" ;;
+        esac
+    done
+    echo ""
+    echo "   Включить HTTPS в программе: пункт 2 (сертификат должен быть уже выпущен, пункт 1)."
+    echo "   Если написано «не отвечает»: служба остановлена или порт занят, смотрите журнал программы (journalctl -u название_службы)."
+}
+
 # --- ГЛАВНОЕ МЕНЮ ---
 while true; do
     echo -e "\n${yellow}================================================================${plain}"
@@ -737,20 +1166,23 @@ while true; do
     echo -e "${yellow}================================================================${plain}"
     echo " Сертификаты на этом сервере:"
     print_cert_status " "
+    print_apps_summary
     echo -e "${yellow}================================================================${plain}"
     echo "1. Установить/Перевыпустить сертификат"
     echo "2. Синхронизировать сертификаты с приложениями (после установки нового ПО)"
     echo "3. Показать путь к файлам сертификата"
     echo "4. Полностью удалить acme.sh, сертификаты и все настройки"
+    echo "5. Статус программ и HTTPS (где установлен сертификат)"
     echo "0. Выйти"
     echo -e "${yellow}================================================================${plain}"
-    read -p "Введите номер действия (0-4): " choice
+    read -p "Введите номер действия (0-5): " choice
     case "$choice" in
         1) ssl_cert_issue_and_deploy ;;
         2) sync_certificates ;;
         3) show_cert_path ;;
         4) remove_acme ;;
+        5) show_apps_status ;;
         0) echo "Выход..."; exit 0 ;;
-        *) echo -e "${red}⚠️ Неверный ввод! Пожалуйста, выберите от 0 до 4.${plain}" ;;
+        *) echo -e "${red}⚠️ Неверный ввод! Пожалуйста, выберите от 0 до 5.${plain}" ;;
     esac
 done

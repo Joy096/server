@@ -1,27 +1,15 @@
 #!/bin/bash
-
-# Получаем реальный путь к скрипту
-SCRIPT_PATH=$(realpath "$0")
-
-# Удаляем скрипт после завершения
-trap 'rm -f "$SCRIPT_PATH"' EXIT
-
-if [[ $EUID -ne 0 ]]; then
-    echo "❌ Этот скрипт должен выполняться от root!"
-    exit 1
-fi
-
 # torrserver_full.sh - TorrServer + любой WireGuard VPN для ЧИСТОЙ установки на Ubuntu (Oracle Cloud)
 #
 # Работает с любым провайдером, который выдаёт конфиг WireGuard (ClearVPN, Mullvad, Proton и т.д.).
 # Название провайдера запрашивается один раз, из него получается имя интерфейса и конфига.
-# Рассчитан на свежий сервер. Запускайте после базовой настройки сервера (server_new.sh), пункт меню 1.
-# Если VPN пока не нужен, пункт 2 ставит только TorrServer (VPN можно подключить позже пунктами 3 и 5).
+# Рассчитан на свежий сервер. Запускайте после базовой настройки сервера (server_new.sh), пункт 1 → 1 (полная установка).
+# Если VPN пока не нужен, пункт 1 → 2 ставит только TorrServer (VPN можно подключить позже: пункты 2 → 1 и 2 → 2).
 #
 # Схема: через VPN идёт ТОЛЬКО трафик пользователя "torrserver" (policy routing по UID).
 #   - SSH, apt и всё остальное ходит напрямую через сеть Oracle (ens3);
 #   - ответы TorrServer с порта веб-интерфейса (8090) идут напрямую на ТВ;
-#   - HTTPS (порт 8091) включает ssl.sh (пункт 2 его меню; запустить его можно отсюда, пункт 12):
+#   - HTTPS (порт 8091) включает ssl.sh (пункт 2 его меню; запустить его можно отсюда, пункт 3 → 5):
 #     kill-switch сам подхватывает порт HTTPS из torrserver.config;
 #   - kill-switch: если VPN упал, у пользователя torrserver нет сети вообще,
 #     утечки через основной интерфейс не будет.
@@ -53,7 +41,7 @@ SSL_PORT=""      # порт HTTPS (если HTTPS включён через ssl.
 HTTPS_REMOVED_PORT=""   # порт HTTPS, правило UFW для которого удалено при удалении TorrServer (для напоминания про Oracle)
 TS_CONFIG="${TS_DIR}/torrserver.config"
 CERT_DIR="/etc/torrserver-cert"   # копия сертификата для TorrServer (кладёт ssl.sh)
-SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 12 меню
+SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 3 → 5 меню
 
 # Состояние, которое запоминается между запусками: провайдер, имя интерфейса, профиль настроек
 STATE_FILE="/etc/torrserver-vpn.state"
@@ -554,7 +542,7 @@ apply_profile_settings() {
     owner=$(stat -c '%U:%G' "$TS_DIR" 2>/dev/null || echo "root:root")
 
     if [[ ! -f "$SETTINGS_FILE" ]]; then
-        echo -e "${YELLOW}⚠️ Файл ${SETTINGS_FILE} ещё не создан, настройки профиля не применены. После первого запуска TorrServer выполните пункт 5 (или 4).${NC}"
+        echo -e "${YELLOW}⚠️ Файл ${SETTINGS_FILE} ещё не создан, настройки профиля не применены. После первого запуска TorrServer выполните пункт 2 → 2 (или 3 → 4).${NC}"
         return 1
     fi
 
@@ -585,7 +573,7 @@ apply_profile_settings() {
 # Служба сначала останавливается, чтобы chown не гонялся с файлами, которые она создаёт от root.
 fix_torrserver_binding() {
     if ! vpn_configured; then
-        echo -e "${RED}❌ VPN не настроен. Сначала выполните пункт 3: иначе kill-switch оставит TorrServer без сети.${NC}"
+        echo -e "${RED}❌ VPN не настроен. Сначала выполните пункт 2 → 1 (добавить VPN-конфиг): иначе kill-switch оставит TorrServer без сети.${NC}"
         return 1
     fi
 
@@ -609,7 +597,7 @@ apply_profile_standalone() {
     systemctl start "$TS_SVC"
 }
 
-# Смена профиля на лету (пункт 4)
+# Смена профиля на лету (пункт 3 → 4)
 change_profile() {
     choose_profile
     if [[ -f "$DROPIN" ]]; then
@@ -703,7 +691,7 @@ setup_vpn() {
 
     sed -i 's/\r$//' "$CONF"
     if ! validate_wg_conf "$CONF"; then
-        echo -e "${RED}Конфиг не принят и удалён. Запустите пункт 3 и вставьте конфиг заново.${NC}"
+        echo -e "${RED}Конфиг не принят и удалён. Запустите пункт 2 → 1 и вставьте конфиг заново.${NC}"
         rm -f "$CONF"
         return 1
     fi
@@ -768,12 +756,12 @@ setup_torrserver() {
     echo -e "${YELLOW}Не забудьте открыть порт ${WEB_PORT}/tcp в Security List / NSG в консоли Oracle Cloud.${NC}"
 }
 
-# Пункт 2: только TorrServer, без VPN и kill-switch
+# Пункт 1 → 2: только TorrServer, без VPN и kill-switch
 setup_torrserver_only() {
     echo -e "\n${YELLOW}=== Установка только TorrServer (без VPN) ===${NC}"
     echo -e "${YELLOW}⚠️ Без VPN весь P2P-трафик TorrServer идёт с реального IP сервера Oracle.${NC}"
     echo "   Жалобы правообладателей на такой IP могут привести к блокировке аккаунта Oracle."
-    echo "   VPN можно подключить позже: пункт 3 (настроить VPN), затем пункт 5 (привязать TorrServer)."
+    echo "   VPN можно подключить позже: пункт 2 → 1 (добавить VPN-конфиг), затем пункт 2 → 2 (включить защиту)."
     read -p "Продолжить установку без VPN? (y/n): " answer
     [[ "$answer" == "y" || "$answer" == "Y" ]] || return
 
@@ -792,7 +780,7 @@ setup_torrserver_only() {
 check_vpn() {
     echo -e "\n${YELLOW}=== Проверка работы WireGuard (${VPN_LABEL:-VPN}) ===${NC}"
     if ! vpn_configured; then
-        echo -e "${YELLOW}VPN не настроен (режим без VPN или установка ещё не выполнена). Пункт 3 - настроить VPN.${NC}"
+        echo -e "${YELLOW}VPN не настроен (режим без VPN или установка ещё не выполнена). Пункт 2 → 1 - добавить VPN-конфиг.${NC}"
         return
     fi
 
@@ -821,7 +809,7 @@ check_safety() {
 
     if ! vpn_configured; then
         echo -e "${YELLOW}VPN не настроен: TorrServer работает без VPN (или ещё не установлен). Проверять нечего.${NC}"
-        echo "Подключить VPN: пункт 3, затем пункт 5."
+        echo "Подключить VPN: пункт 2 → 1, затем пункт 2 → 2."
         return
     fi
 
@@ -857,7 +845,7 @@ check_safety() {
         if [[ "$owner" == "$TS_USER" ]]; then
             echo -e "${GREEN}[OK] TorrServer запущен от пользователя ${TS_USER}.${NC}"
         else
-            echo -e "${RED}[FAIL] TorrServer запущен от '${owner:-?}', а не от ${TS_USER}! (пункт 5 привязывает его к VPN)${NC}"
+            echo -e "${RED}[FAIL] TorrServer запущен от '${owner:-?}', а не от ${TS_USER}! (пункт 2 → 2 включает защиту VPN)${NC}"
             errors=$((errors + 1))
         fi
     else
@@ -891,7 +879,7 @@ check_safety() {
         if ip -4 rule show | grep -q "sport ${SSL_PORT} lookup main"; then
             echo -e "${GREEN}[OK] Ответы по HTTPS (порт ${SSL_PORT}) идут напрямую на ТВ.${NC}"
         else
-            echo -e "${RED}[FAIL] HTTPS включён (порт ${SSL_PORT}), но правила для его ответов нет! (пункт 9 исправит)${NC}"
+            echo -e "${RED}[FAIL] HTTPS включён (порт ${SSL_PORT}), но правила для его ответов нет! (пункт 4 → 2 исправит)${NC}"
             errors=$((errors + 1))
         fi
     fi
@@ -960,7 +948,7 @@ auto_fix() {
     echo -e "\n${YELLOW}🛠️ [АВТО-ИСПРАВЛЕНИЕ] Пересборка правил маршрутизации и служб...${NC}"
 
     if ! vpn_configured; then
-        echo -e "${RED}⚠️ VPN не настроен (нет имени провайдера или файла ${CONF}). Запустите пункт 1 или 3.${NC}"
+        echo -e "${RED}⚠️ VPN не настроен (нет имени провайдера или файла ${CONF}). Запустите пункт 2 → 1 (добавить VPN-конфиг).${NC}"
         return
     fi
 
@@ -1286,7 +1274,7 @@ uninstall_menu() {
 # ---------------------------------------------------------------- ПЕРЕХОД В ssl.sh
 
 # Скачивает ssl.sh (выпуск и установка сертификата, включение HTTPS) и запускает его.
-# После выхода из него (пункт 0) вы вернётесь в это меню.
+# После выхода из него (пункт 0) вы вернётесь в меню TorrServer.
 run_ssl_script() {
     echo -e "\n${YELLOW}=== Сертификат для HTTPS: переход в ssl.sh ===${NC}"
     command -v curl &>/dev/null || apt_install_tracked curl || return 1
@@ -1301,50 +1289,190 @@ run_ssl_script() {
     echo -e "${GREEN}✅ Скачан. Запускаю (выход из ssl.sh: пункт 0, потом вы вернётесь сюда).${NC}\n"
     bash "$tmp"
     rm -f "$tmp"
-    echo -e "\n${GREEN}Вы вернулись в меню TorrServer.${NC} Проверить, что HTTPS работает: пункт 8."
+    echo -e "\n${GREEN}Вы вернулись в меню TorrServer.${NC} Проверить, что HTTPS работает: пункт 4."
 }
 
 # ---------------------------------------------------------------- МЕНЮ
 
-while true; do
-    if vpn_configured; then
-        vpn_info="VPN: ${VPN_LABEL} (${CONF_NAME})"
+ts_installed() { systemctl cat "${TS_SVC}.service" &>/dev/null; }
+
+# Шапка: состояние TorrServer, VPN и HTTPS и подсказка, что делать дальше
+print_home() {
+    local ts vpn https hint tun prot
+    detect_port
+    detect_ssl_port
+    if ! ts_installed; then
+        ts="${YELLOW}не установлен${NC}"
+    elif systemctl is-active --quiet "$TS_SVC"; then
+        ts="${GREEN}работает${NC} (порт ${WEB_PORT}, профиль: ${PROFILE:-не выбран})"
     else
-        vpn_info="VPN: не настроен"
+        ts="${RED}остановлен${NC} (профиль: ${PROFILE:-не выбран})"
+    fi
+    if vpn_configured; then
+        if wg show "$CONF_NAME" &>/dev/null; then tun="${GREEN}туннель активен${NC}"; else tun="${RED}туннель не активен${NC}"; fi
+        if [[ -f "$DROPIN" ]]; then prot="${GREEN}защита включена${NC}"; else prot="${YELLOW}защита выключена (TorrServer идёт напрямую)${NC}"; fi
+        vpn="${VPN_LABEL} (${CONF_NAME}): ${tun}, ${prot}"
+    else
+        vpn="${YELLOW}не настроен${NC}"
+    fi
+    if ! ts_installed; then
+        https="-"
+    elif [[ -n "$SSL_PORT" ]]; then
+        https="${GREEN}включён${NC} (порт ${SSL_PORT})"
+    else
+        https="${YELLOW}выключен${NC}"
+    fi
+    if ! ts_installed; then
+        hint="пункт 1 (установка)."
+    elif ! vpn_configured; then
+        hint="пункт 2 → 1 (добавить VPN-конфиг), затем пункт 2 → 2 (включить защиту)."
+    elif [[ ! -f "$DROPIN" ]]; then
+        hint="пункт 2 → 2 (включить защиту: TorrServer только через VPN)."
+    elif ! wg show "$CONF_NAME" &>/dev/null; then
+        hint="туннель не активен: пункт 4 (проверка безопасности)."
+    else
+        hint="всё настроено, проверить безопасность можно в пункте 4."
     fi
     echo -e "\n${YELLOW}==================================================${NC}"
-    echo -e "${YELLOW}   Управление TorrServer + WireGuard VPN (Oracle)   ${NC}"
-    echo -e "${YELLOW}   ${vpn_info} | профиль: ${PROFILE:-не выбран}   ${NC}"
+    echo -e "${YELLOW}   TorrServer + WireGuard VPN (Oracle)${NC}"
     echo -e "${YELLOW}==================================================${NC}"
-    echo "1.  Полная установка (VPN + Kill-Switch + TorrServer)"
-    echo "2.  Установить только TorrServer (без VPN)"
-    echo "3.  Настроить / Перезапустить WireGuard (VPN-провайдер)"
-    echo "4.  Сменить профиль настроек TorrServer (слабая / мощная VPS)"
-    echo "5.  Привязать TorrServer к VPN (и применить профиль настроек)"
-    echo "6.  Проверить статус WireGuard (Интерфейс и IP)"
-    echo "7.  Проверить статус TorrServer"
-    echo "8.  ПРОВЕРКА БЕЗОПАСНОСТИ (Маршруты, IP, Привязка)"
-    echo "9.  Запустить АВТО-ИСПРАВЛЕНИЕ вручную"
-    echo "10. Откат (убрать привязку к VPN)"
-    echo "11. Удаление (вернуть систему к состоянию до установки)"
-    echo "12. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
-    echo "0.  Выход"
-    echo "=================================================="
-    read -p "Выберите действие [0-12]: " choice
+    echo -e "TorrServer:     ${ts}"
+    echo -e "VPN:            ${vpn}"
+    echo -e "HTTPS:          ${https}"
+    echo -e "Следующий шаг:  ${hint}"
+    echo -e "${YELLOW}==================================================${NC}"
+}
+
+# Запуск, остановка и перезапуск службы TorrServer (привязка к VPN и профиль при этом сохраняются)
+ts_need_installed() {
+    ts_installed && return 0
+    echo -e "${RED}TorrServer не установлен. Установка: пункт 1.${NC}"
+    return 1
+}
+ts_start() {
+    ts_need_installed || return
+    systemctl start "$TS_SVC"
+    sleep 1
+    if systemctl is-active --quiet "$TS_SVC"; then
+        echo -e "${GREEN}✅ TorrServer запущен.${NC}"
+    else
+        echo -e "${RED}❌ TorrServer не запустился. Смотрите: journalctl -u ${TS_SVC} -n 30${NC}"
+    fi
+}
+ts_stop() {
+    ts_need_installed || return
+    systemctl stop "$TS_SVC"
+    echo -e "${GREEN}✅ TorrServer остановлен (до следующего запуска или перезагрузки сервера он не работает).${NC}"
+}
+ts_restart() {
+    ts_need_installed || return
+    systemctl restart "$TS_SVC"
+    sleep 1
+    if systemctl is-active --quiet "$TS_SVC"; then
+        echo -e "${GREEN}✅ TorrServer перезапущен.${NC}"
+    else
+        echo -e "${RED}❌ TorrServer не запустился после перезапуска. Смотрите: journalctl -u ${TS_SVC} -n 30${NC}"
+    fi
+}
+
+install_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== Установка ===${NC}"
+        echo "1. Полная установка (VPN + защита + TorrServer)"
+        echo "2. Только TorrServer (без VPN)"
+        echo "0. Назад"
+        read -rp "Выберите [0-2]: " c || return
+        case "$c" in
+            1) setup_vpn && setup_torrserver; check_safety ;;
+            2) setup_torrserver_only ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+vpn_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== VPN (WireGuard) ===${NC}"
+        echo "1. Добавить или сменить VPN-конфиг WireGuard (вставить конфиг от провайдера)"
+        echo "2. Включить защиту: TorrServer только через VPN (если VPN упадёт, сети у него не будет)"
+        echo "3. Выключить защиту: TorrServer напрямую, без VPN"
+        echo "4. Статус VPN (интерфейс и IP)"
+        echo "0. Назад"
+        read -rp "Выберите [0-4]: " c || return
+        case "$c" in
+            1) setup_vpn ;;
+            2) fix_torrserver_binding ;;
+            3) revert_routing ;;
+            4) check_vpn ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+torrserver_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== TorrServer ===${NC}"
+        if systemctl is-active --quiet "$TS_SVC"; then
+            echo "1. Остановить TorrServer"
+        else
+            echo "1. Запустить TorrServer"
+        fi
+        echo "2. Перезапустить TorrServer"
+        echo "3. Статус TorrServer"
+        echo "4. Сменить профиль настроек (слабая / мощная VPS)"
+        echo "5. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
+        echo "0. Назад"
+        read -rp "Выберите [0-5]: " c || return
+        case "$c" in
+            1) if systemctl is-active --quiet "$TS_SVC"; then ts_stop; else ts_start; fi ;;
+            2) ts_restart ;;
+            3) check_torrserver ;;
+            4) change_profile ;;
+            5) run_ssl_script ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+safety_menu() {
+    local c
+    while true; do
+        echo -e "\n${YELLOW}=== Проверка безопасности ===${NC}"
+        echo "1. Проверка безопасности (маршруты, IP, привязка; при проблемах предложит исправить)"
+        echo "2. Принудительно пересоздать правила и привязку (если проверка не помогла)"
+        echo "0. Назад"
+        read -rp "Выберите [0-2]: " c || return
+        case "$c" in
+            1) check_safety ;;
+            2) auto_fix ;;
+            0|"") return ;;
+            *) echo -e "${RED}Неверный пункт.${NC}" ;;
+        esac
+    done
+}
+
+while true; do
+    print_home
+    echo "1. Установка (полная или только TorrServer)"
+    echo "2. VPN (WireGuard: конфиг, защита, статус)"
+    echo "3. TorrServer (запуск, остановка, профиль, HTTPS)"
+    echo "4. Проверка безопасности"
+    echo "5. Удаление (вернуть систему к состоянию до установки)"
+    echo "0. Выход"
+    read -rp "Выберите действие [0-5]: " choice || exit 0
 
     case $choice in
-        1) setup_vpn && setup_torrserver; check_safety ;;
-        2) setup_torrserver_only ;;
-        3) setup_vpn ;;
-        4) change_profile ;;
-        5) fix_torrserver_binding ;;
-        6) check_vpn ;;
-        7) check_torrserver ;;
-        8) check_safety ;;
-        9) auto_fix ;;
-        10) revert_routing ;;
-        11) uninstall_menu ;;
-        12) run_ssl_script ;;
+        1) install_menu ;;
+        2) vpn_menu ;;
+        3) torrserver_menu ;;
+        4) safety_menu ;;
+        5) uninstall_menu ;;
         0) echo "Выход."; exit 0 ;;
         *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
     esac
