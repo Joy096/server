@@ -746,6 +746,17 @@ install_torrserver_core() {
     fi
 }
 
+# Подсказка в конце установки: кнопка VLC в веб-интерфейсе на Windows сама не работает
+print_vlc_note() {
+    echo -e "\n${YELLOW}ℹ️ Просмотр через VLC на Windows:${NC}"
+    echo "   Кнопка VLC в веб-интерфейсе TorrServer открывает ссылку vlc://, а Windows её не знает."
+    echo "   Чтобы кнопка работала, на компьютере с Windows нужно один раз:"
+    echo "   1) скачать программу vlc-protocol: https://github.com/northsea4/vlc-protocol"
+    echo "   2) скопировать её в папку с VLC (рядом с vlc.exe, обычно C:\\Program Files\\VideoLAN\\VLC)"
+    echo "   3) запустить её"
+    echo "   4) перезапустить браузер"
+}
+
 setup_torrserver() {
     echo -e "\n${YELLOW}=== [2/2] Установка и настройка TorrServer ===${NC}"
     install_torrserver_core
@@ -754,6 +765,7 @@ setup_torrserver() {
     fix_torrserver_binding
     echo -e "${GREEN}✅ TorrServer запущен на порту ${WEB_PORT}!${NC}"
     echo -e "${YELLOW}Не забудьте открыть порт ${WEB_PORT}/tcp в Security List / NSG в консоли Oracle Cloud.${NC}"
+    print_vlc_note
 }
 
 # Пункт 1 → 2: только TorrServer, без VPN и kill-switch
@@ -773,6 +785,7 @@ setup_torrserver_only() {
 
     echo -e "${GREEN}✅ TorrServer запущен на порту ${WEB_PORT} (без VPN).${NC}"
     echo -e "${YELLOW}Не забудьте открыть порт ${WEB_PORT}/tcp в Security List / NSG в консоли Oracle Cloud.${NC}"
+    print_vlc_note
 }
 
 # ---------------------------------------------------------------- ПРОВЕРКИ

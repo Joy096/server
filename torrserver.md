@@ -1,6 +1,6 @@
 # torrserver.sh (до 27.10.2026 назывался torrserver_full.sh) — TorrServer + WireGuard VPN с kill-switch
 
-Интерактивный скрипт для Ubuntu (Oracle Cloud). Ставит TorrServer и пускает через любой WireGuard VPN **только** трафик его пользователя. Запуск: `sudo bash torrserver.sh`. Раньше назывался `setup_all.sh`, затем `torrserver_full.sh`. 1479 строк, `bash -n` проходит. В комментариях внутри файла кое-где ещё написано `torrserver_full.sh` / `qbittorrent_full.sh` (на работу не влияет). Рассчитан на свежий сервер после базовой настройки (`server_new.sh`, его пункт меню 1), но умеет подхватывать уже существующую установку.
+Интерактивный скрипт для Ubuntu (Oracle Cloud). Ставит TorrServer и пускает через любой WireGuard VPN **только** трафик его пользователя. Запуск: `sudo bash torrserver.sh`. Раньше назывался `setup_all.sh`, затем `torrserver_full.sh`. 1492 строки, `bash -n` проходит. В комментариях внутри файла кое-где ещё написано `torrserver_full.sh` / `qbittorrent_full.sh` (на работу не влияет). Рассчитан на свежий сервер после базовой настройки (`server_new.sh`, его пункт меню 1), но умеет подхватывать уже существующую установку.
 
 Парные файлы: `qbittorrent.sh` / `qbittorrent.md` (та же схема для qBittorrent, они делят один WireGuard-туннель) и `ssl.sh` / `ssl.md` (сертификат и HTTPS).
 
@@ -100,6 +100,9 @@
 ### Установка TorrServer
 Официальный установщик `YouROK/TorrServer` (`installTorrServerLinux.sh`), нужно отвечать «да» на запуск от root (так проверена вся схема). Скрипт ждёт появления `settings.json` (до 20 с), определяет порт, открывает его в UFW (запоминает, только если правила не было). Напоминает открыть порт в Security List / NSG Oracle Cloud.
 
+### Подсказка про VLC на Windows (добавлено 31.10.2026)
+В конце обеих установок (`setup_torrserver`, `setup_torrserver_only`) вызывается `print_vlc_note`: кнопка VLC в веб-интерфейсе (настройки «Плееры») открывает ссылку `vlc://`, которую Windows не знает. Нужно один раз скачать программу vlc-protocol (`https://github.com/northsea4/vlc-protocol`, ссылку дал Vitalii), скопировать её в папку VLC (рядом с `vlc.exe`), запустить и перезапустить браузер. Запасной путь (Ctrl+N и ссылка) в скрипте не пишем: Vitalii отказался. Подробные шаги для разных способов установки (PowerShell, bat, exe) в README проекта на GitHub не проверялись. Резервная копия: `torrserver.before_vlcnote.sh`.
+
 ### HTTPS веб-интерфейса (добавлено 27.10.2026)
 - Включает **не этот скрипт, а `ssl.sh`**: пункты 1 и 2 его меню, блок 6 hook-скрипта (запуск из этого меню: пункт 3 → 5). Блок копирует сертификат в `/etc/torrserver-cert/`, правит `DAEMON_OPTIONS` в `/opt/torrserver/torrserver.config` (добавляет ` --ssl --sslport 8091 --sslcert .../fullchain.pem --sslkey .../private.key`), открывает порт в UFW (если правила не было; порт запоминается в `ufw_port`), обновляет kill-switch (`torrserver-ks.sh up`), перезапускает службу и ждёт ответа `https://127.0.0.1:8091/echo` до 30 с. Итог: `https://домен:8091`.
 - Обычный HTTP (порт 8090) продолжает работать рядом; `--force-https` Vitalii не включал («пока так»). В приложениях (TS на телефоне/ТВ и др.) адрес сервера нужно указывать с `https://` и портом 8091: с `http://` на порту 8091 приложение получает «Temporary Redirect» и показывает ошибку (подтверждено: с `https://` всё работает).
@@ -107,7 +110,7 @@
 - Сертификат должен читать тот пользователь, от которого работает служба (после привязки к VPN это `torrserver`): поэтому `ensure_user` делает `chown -R torrserver:torrserver /etc/torrserver-cert`, а `ssl.sh` определяет владельца через `systemctl show -p User --value torrserver` (иначе root).
 - Kill-switch (`install_routing_helpers`, heredoc `KSEOF`): добавлены `CONF=__CONF__` и чтение порта HTTPS при каждом запуске (`up`); если HTTPS включён, добавляются правила приоритета 90 `ipproto tcp sport SSLPORT lookup main` (IPv4 и IPv6), иначе ответы с порта 8091 ушли бы в VPN/kill-switch и страница не открывалась бы. Старые установки получают новый kill-switch через пункт 4 → 2 (принудительное пересоздание) или 2 → 2.
 - Проверка безопасности (`check_safety`, пункт 4 → 1): при включённом HTTPS проверяет правило `sport ${SSL_PORT} lookup main` и локальный `curl -sk https://127.0.0.1:${SSL_PORT}/echo` (любой код, кроме 000, считается ответом).
-- Удаление (`remove_torrserver_parts`): если есть `/etc/torrserver-cert`, читает `ufw_port`, закрывает это правило UFW, удаляет папку сертификата; в итоговом напоминании про Oracle добавляется строка про порт HTTPS. В `ssl.sh` пункт 4 (удалить acme.sh) сам отключает HTTPS в TorrServer (`remove_torrserver_https`).
+- Удаление (`remove_torrserver_parts`): если есть `/etc/torrserver-cert`, читает `ufw_port`, закрывает это правило UFW, удаляет папку сертификата; в итоговом напоминании про Oracle добавляется строка про порт HTTPS. В `ssl.sh` пункт 4 сам отключает HTTPS в TorrServer (`remove_torrserver_https`).
 - Порт HTTPS (8091) нужно открыть и в Security List / NSG Oracle Cloud.
 - Шифруется только связь браузера/приложения с TorrServer; провайдер дома всё равно видит IP сервера и DNS-имя, объём и время трафика. Торрент-трафик идёт через VPN.
 
