@@ -759,18 +759,14 @@ api_refresh() {  # после смены адреса/ключа сервера:
 
 api_gen_password() { tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 16; }
 
-api_read_password() {  # спрашивает пароль админки -> API_PW_NEW; API_PW_OWN=1, если ввели свой
-    local p1 p2
-    API_PW_OWN=0; API_PW_NEW=""
-    echo "Пароль администратора (логин admin): введите свой, минимум 8 символов, или нажмите Enter, и я придумаю случайный."
+api_read_password() {  # спрашивает пароль админки (вводимое видно) -> API_PW_NEW
+    local p
+    echo "Пароль администратора (логин admin): введите свой, минимум 8 символов (вводимое видно), или нажмите Enter, и я придумаю случайный."
     while true; do
-        read -rsp "Пароль: " p1 || return 1; echo
-        if [[ -z "$p1" ]]; then API_PW_NEW=$(api_gen_password); return 0; fi
-        if (( ${#p1} < 8 )); then echo -e "${RED}Слишком короткий, минимум 8 символов. Введите ещё раз.${NC}"; continue; fi
-        read -rsp "Повторите пароль: " p2 || return 1; echo
-        if [[ "$p1" != "$p2" ]]; then echo -e "${RED}Пароли не совпали. Введите ещё раз.${NC}"; continue; fi
-        API_PW_NEW="$p1"; API_PW_OWN=1
-        return 0
+        read -rp "Пароль: " p || return 1
+        if [[ -z "$p" ]]; then API_PW_NEW=$(api_gen_password); return 0; fi
+        if (( ${#p} >= 8 )); then API_PW_NEW="$p"; return 0; fi
+        echo -e "${RED}Слишком короткий, минимум 8 символов. Введите ещё раз.${NC}"
     done
 }
 
@@ -931,18 +927,15 @@ api_install() {
         echo -e "${RED}Программа не ответила за 30 секунд. Смотрите журнал: пункт 3 этого раздела.${NC}"
         return 1
     fi
-    if [[ -n "$API_PW_NEW" ]] && api_set_password "$API_PW_NEW"; then
-        if (( API_PW_OWN )); then
-            echo -e "\n${GREEN}Пароль администратора (логин admin) задан: тот, что вы ввели.${NC}"
-        else
-            echo -e "\n${GREEN}Пароль администратора (логин admin). Он показан только сейчас, сохраните его:${NC}"
-            echo -e "   ${YELLOW}${API_PW_NEW}${NC}"
-        fi
-    else
-        echo -e "${YELLOW}Не удалось задать пароль администратора. Первый пароль есть в журнале (journalctl -u ${SVC_A} | head -n 40), или задайте свой: пункт 4.${NC}"
-    fi
+    local pwok=0
+    api_set_password "$API_PW_NEW" && pwok=1
     echo -e "${GREEN}✅ Установка завершена. Версия: $tag${NC}"
     api_show
+    if (( pwok )); then
+        echo -e "\n${GREEN}Админка: логин admin, пароль${NC} ${YELLOW}${API_PW_NEW}${NC} (запишите его)."
+    else
+        echo -e "\n${YELLOW}Не удалось задать пароль администратора. Первый пароль есть в журнале (journalctl -u ${SVC_A} | head -n 40), или задайте свой: пункт 4.${NC}"
+    fi
 }
 
 api_status() {
@@ -972,8 +965,8 @@ api_password_change() {
     echo -e "\n${YELLOW}=== Сменить пароль администратора ===${NC}"
     api_read_password || { echo "Отменено."; return 0; }
     if api_set_password "$API_PW_NEW"; then
-        echo -e "${GREEN}✅ Пароль admin изменён.${NC}"
-        (( API_PW_OWN )) || echo -e "Новый пароль: ${YELLOW}${API_PW_NEW}${NC} (сохраните сейчас)"
+        echo -e "${GREEN}✅ Пароль admin (только для входа в админку) изменён:${NC} ${YELLOW}${API_PW_NEW}${NC}"
+        echo "Пароль пользователя для клиентов меняется в админке: Пользователи -> «Сбросить пароль»."
     else
         echo -e "${RED}Не удалось сменить пароль. Смотрите журнал: пункт 3 этого раздела.${NC}"
     fi
