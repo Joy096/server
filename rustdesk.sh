@@ -37,7 +37,7 @@ CERT_ROOT="/root/my_cert"                  # сюда ssl.sh кладёт сер
 SVC_A="rustdesk-api"
 SVC_AT="rustdesk-api-tls"
 SVC_ATR="rustdesk-api-tls-reload"
-API_PORT=21114                             # порт для клиентов (HTTPS или HTTP)
+API_PORT_DEFAULT=21114                     # порт для клиентов без HTTPS (с HTTPS можно выбрать 443)
 API_LOCAL_PORT=21124                       # внутренний порт за nginx (только при HTTPS)
 
 # ---------------------------------------------------------------- вспомогательное
@@ -57,16 +57,8 @@ ask_yn() {
     done
 }
 
-conf_value() { awk -F= -v k="$1" '$1==k {sub(/^[^=]*=/,""); gsub(/^[ \t"]+|[ \t"]+$/,""); print; exit}' "$CONF" 2>/dev/null; }
-
-conf_set() {  # conf_set ключ значение
-    touch "$CONF"; chmod 644 "$CONF"
-    if grep -q "^$1=" "$CONF" 2>/dev/null; then
-        sed -i "s|^$1=.*|$1=$2|" "$CONF"
-    else
-        echo "$1=$2" >> "$CONF"
-    fi
-}
+conf_value() { kv_get "$CONF" "$1"; }
+conf_set()   { kv_set "$CONF" "$1" "$2"; }
 
 ulog() {  # запись в журнал обновлений и на экран
     echo "$*"
@@ -104,9 +96,7 @@ ensure_deps() {
     echo "Ставлю нужные пакеты: ${need[*]} ..."
     apt-get update -qq >/dev/null 2>&1
     apt-get install -y "${need[@]}" >/dev/null 2>&1
-    for c in curl unzip; do
-        command -v "$c" >/dev/null || { echo -e "${RED}Не удалось поставить $c.${NC}"; return 1; }
-    done
+    command -v curl >/dev/null && command -v unzip >/dev/null || { echo -e "${RED}Не удалось поставить curl и unzip.${NC}"; return 1; }
 }
 
 valid_ip() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
@@ -139,15 +129,17 @@ ask_address() {  # ask_address "умолчание" -> ADDRESS
 
 # ---------------------------------------------------------------- загрузка версий
 
-latest_tag() {  # номер последней версии на GitHub
+gh_latest() {  # gh_latest владелец/репозиторий -> номер последней версии на GitHub
     local t
-    t=$(curl -s -m 15 -o /dev/null -w '%{redirect_url}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed -n 's|.*/tag/||p' | tr -d '[:space:]')
+    t=$(curl -s -m 15 -o /dev/null -w '%{redirect_url}' "https://github.com/$1/releases/latest" 2>/dev/null | sed -n 's|.*/tag/||p' | tr -d '[:space:]')
     if [[ -z "$t" ]]; then
-        t=$(curl -s -m 15 "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null \
+        t=$(curl -s -m 15 "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
             | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name" *: *"([^"]+)".*/\1/')
     fi
     echo "$t"
 }
+latest_tag()     { gh_latest "$REPO"; }
+api_latest_tag() { gh_latest "$API_REPO"; }
 
 fetch_release() {  # fetch_release версия папка -> в папке лежат готовые hbbs и hbbr
     local tag="$1" dest="$2" a url f
@@ -199,89 +191,64 @@ ipt_save() {
     elif [[ -d /etc/iptables ]]; then
         iptables-save > /etc/iptables/rules.v4
     else
-        echo -e "${YELLOW}Правила iptables сохранить нечем: после перезагрузки сервера их придётся открыть заново (пункт 1).${NC}"
+        echo -e "${YELLOW}Правила iptables сохранить нечем: после перезагрузки порты придётся открыть заново.${NC}"
+    fi
+}
+
+fw_rule() {  # fw_rule open|close tcp|udp порт(ы): через ufw, если он включён, иначе через iptables
+    local act="$1" proto="$2" ports="$3"
+    if [[ "$act" == "open" ]]; then
+        if ufw_active; then ufw allow "$ports/$proto" >/dev/null 2>&1
+        elif command -v iptables >/dev/null; then ipt_add "$proto" "$ports"; ipt_save; fi
+    else
+        ufw_active && ufw --force delete allow "$ports/$proto" >/dev/null 2>&1
+        if command -v iptables >/dev/null; then ipt_del "$proto" "$ports"; ipt_save; fi
     fi
 }
 
 fw_open() {
-    if ufw_active; then
-        ufw allow 21115:21117/tcp >/dev/null 2>&1
-        ufw allow 21116/udp >/dev/null 2>&1
-        echo "Порты открыты через ufw: TCP 21115-21117, UDP 21116."
-    elif command -v iptables >/dev/null; then
-        ipt_add tcp 21115:21117
-        ipt_add udp 21116
-        ipt_save
-        echo "Порты открыты через iptables: TCP 21115-21117, UDP 21116."
-    else
-        echo -e "${YELLOW}ufw и iptables не найдены: порты в системе не открывал.${NC}"
+    if ! ufw_active && ! command -v iptables >/dev/null; then
+        echo -e "${YELLOW}ufw и iptables не найдены: порты в системе не открывал.${NC}"; return
     fi
+    fw_rule open tcp 21115:21117; fw_rule open udp 21116
+    echo "Порты открыты ($(ufw_active && echo ufw || echo iptables)): TCP 21115-21117, UDP 21116."
 }
 
-fw_close() {
-    if ufw_active; then
-        ufw --force delete allow 21115:21117/tcp >/dev/null 2>&1
-        ufw --force delete allow 21116/udp >/dev/null 2>&1
-    fi
-    if command -v iptables >/dev/null; then
-        ipt_del tcp 21115:21117
-        ipt_del udp 21116
-        ipt_save
-    fi
-}
+fw_close() { fw_rule close tcp 21115:21117; fw_rule close udp 21116; }
 
 # ---------------------------------------------------------------- службы
 
+write_service() {  # write_service имя "описание" "после чего" "ExecStart" пользователь рабочая_папка [файл_настроек]
+    cat > "$UNIT_DIR/$1.service" <<UEOF
+[Unit]
+Description=$2
+After=network-online.target $3
+Wants=network-online.target $3
+
+[Service]
+Type=simple
+User=$5
+Group=$5
+WorkingDirectory=$6
+${7:+EnvironmentFile=$7}
+ExecStart=$4
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+MemoryMax=300M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
+UEOF
+}
+
 write_units() {
-    cat > "$UNIT_DIR/$SVC_R.service" <<UEOF
-[Unit]
-Description=RustDesk relay server (hbbr)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=rustdesk
-Group=rustdesk
-WorkingDirectory=${DATA_DIR}
-ExecStart=${BIN_DIR}/hbbr -k _
-Restart=always
-RestartSec=5
-LimitNOFILE=65535
-MemoryMax=300M
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=full
-
-[Install]
-WantedBy=multi-user.target
-UEOF
-    cat > "$UNIT_DIR/$SVC_S.service" <<UEOF
-[Unit]
-Description=RustDesk ID server (hbbs)
-After=network-online.target ${SVC_R}.service
-Wants=network-online.target ${SVC_R}.service
-
-[Service]
-Type=simple
-User=rustdesk
-Group=rustdesk
-WorkingDirectory=${DATA_DIR}
-EnvironmentFile=${CONF}
-ExecStart=${BIN_DIR}/hbbs -r \${ADDR}:21117 -k _
-Restart=always
-RestartSec=5
-LimitNOFILE=65535
-MemoryMax=300M
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=full
-
-[Install]
-WantedBy=multi-user.target
-UEOF
+    write_service "$SVC_R" "RustDesk relay server (hbbr)" "" "$BIN_DIR/hbbr -k _" rustdesk "$DATA_DIR"
+    write_service "$SVC_S" "RustDesk ID server (hbbs)" "$SVC_R.service" "$BIN_DIR/hbbs -r \${ADDR}:21117 -k _" rustdesk "$DATA_DIR" "$CONF"
     systemctl daemon-reload
 }
 
@@ -336,13 +303,12 @@ wait_both_active() {  # ждёт несколько секунд, что обе 
     return 0
 }
 
-wait_key() {
-    local i
-    for i in $(seq 1 30); do
-        [[ -s "$DATA_DIR/id_ed25519.pub" ]] && return 0
-        sleep 1
-    done
-    return 1
+wait_until() { local i; for i in $(seq 1 "$1"); do "${@:2}" && return 0; sleep 1; done; return 1; }   # wait_until секунд команда...
+wait_key()   { wait_until 30 test -s "$DATA_DIR/id_ed25519.pub"; }
+svc_line() {  # строка статуса службы
+    local m; m=$(systemctl show -p MemoryCurrent --value "$1" 2>/dev/null)
+    [[ "$m" =~ ^[0-9]+$ ]] && m="$((m / 1048576)) МБ" || m="?"
+    echo "Служба $1: $(systemctl is-active "$1") (автозапуск: $(systemctl is-enabled "$1" 2>/dev/null)), память $m"
 }
 
 # ---------------------------------------------------------------- старая установка через Docker
@@ -359,7 +325,7 @@ migrate_old() {
         if ask_yn "Остановить их и выключить автозапуск?" y; then
             docker update --restart=no hbbs hbbr >/dev/null 2>&1
             docker stop hbbs hbbr >/dev/null 2>&1
-            echo "Старые контейнеры остановлены. Папку ${OLD_DIR} я не трогал: удалите её сами, когда убедитесь, что всё работает."
+            echo "Старые контейнеры остановлены. Папку ${OLD_DIR} не трогал: удалите её сами, когда всё заработает."
         else
             echo -e "${RED}Пока они работают, новый сервер не сможет занять порты.${NC}"
         fi
@@ -383,8 +349,7 @@ show_data() {
     echo -e "Сервер API           : ${YELLOW}оставить пустым${NC}"
     echo -e "Key (ключ)           : ${YELLOW}${key}${NC}"
     echo -e "${CYAN}=================================================${NC}"
-    echo "Куда вводить: приложение RustDesk -> Настройки -> Сеть (на телефоне: Настройки -> Сервер ID/ретрансляции)"
-    echo "-> если поля серые, нажмите «Разблокировать» -> впишите данные выше -> «Применить»."
+    echo "Куда вводить: RustDesk -> Настройки -> Сеть (на телефоне: Настройки -> Сервер ID/ретрансляции) -> «Разблокировать» -> данные выше -> «Применить»."
 }
 
 do_install() {
@@ -448,14 +413,9 @@ show_status() {
     echo -e "\n${YELLOW}📊 [СТАТУС]${NC}"
     describe_server
     if ! is_installed; then echo "RustDesk Server не установлен (пункт 1)."; return; fi
-    local mem p
+    local p listen=""
     echo "Версия: $(conf_value VERSION); адрес для клиентов: $(conf_value ADDR)"
-    for s in "$SVC_S" "$SVC_R"; do
-        mem=$(systemctl show -p MemoryCurrent --value "$s" 2>/dev/null)
-        [[ "$mem" =~ ^[0-9]+$ ]] && mem="$((mem / 1048576)) МБ" || mem="?"
-        echo "Служба $s: $(systemctl is-active "$s") (автозапуск: $(systemctl is-enabled "$s" 2>/dev/null)), память $mem"
-    done
-    local listen=""
+    svc_line "$SVC_S"; svc_line "$SVC_R"
     for p in 21115 21116 21117; do ss -H -ltn "sport = :$p" 2>/dev/null | grep -q . && listen+="TCP $p; "; done
     ss -H -lun "sport = :21116" 2>/dev/null | grep -q . && listen+="UDP 21116"
     echo "Слушает порты: ${listen:-нет}"
@@ -565,7 +525,7 @@ do_uninstall() {
     ask_yn "Удалить RustDesk Server (службы, программу, настройки, правила портов)?" n || { echo "Отменено."; return; }
     local drop_key=0
     if [[ -d "$DATA_DIR" ]]; then
-        echo "Ключ сервера лежит в $DATA_DIR. Если его удалить, при новой установке ключ будет другим, и его придётся заново вписывать во всех клиентах."
+        echo "Ключ сервера лежит в $DATA_DIR. Если его удалить, ключ при новой установке будет другим, и его придётся вписывать во всех клиентах."
         ask_yn "Удалить и ключ?" n && drop_key=1
     fi
     systemctl disable --now "$SVC_U.timer" "$SVC_S" "$SVC_R" >/dev/null 2>&1
@@ -602,11 +562,16 @@ kv_set() {  # kv_set файл ключ значение
 
 api_installed() { [[ -x "$API_DIR/apimain" && -f "$UNIT_DIR/$SVC_A.service" ]]; }
 api_tls_on()    { [[ "$(kv_get "$API_CONF" API_TLS)" == "1" ]]; }
-api_local_port() { if api_tls_on; then echo "$API_LOCAL_PORT"; else echo "$API_PORT"; fi; }
+api_port()       { local p; p=$(kv_get "$API_CONF" API_PORT); echo "${p:-$API_PORT_DEFAULT}"; }   # порт для клиентов
+api_local_port() { if api_tls_on; then echo "$API_LOCAL_PORT"; else api_port; fi; }
 
-api_url() {  # адрес, который вписывают в поле «Сервер API»
-    local d; d=$(kv_get "$API_CONF" API_DOMAIN)
-    if api_tls_on; then echo "https://$d:$API_PORT"; else echo "http://${d:-$(conf_value ADDR)}:$API_PORT"; fi
+api_url() {  # адрес, который вписывают в поле «Сервер API» (порт 443 не пишется)
+    local d p; d=$(kv_get "$API_CONF" API_DOMAIN); p=$(api_port)
+    if api_tls_on; then
+        if [[ "$p" == "443" ]]; then echo "https://$d"; else echo "https://$d:$p"; fi
+    else
+        echo "http://${d:-$(conf_value ADDR)}:$p"
+    fi
 }
 
 api_up() {  # программа отвечает на внутреннем порту
@@ -615,16 +580,7 @@ api_up() {  # программа отвечает на внутреннем по
     [[ -n "$c" && "$c" != "000" && "$c" != "502" ]]
 }
 
-api_wait_up() {
-    local i
-    for i in $(seq 1 30); do api_up && return 0; sleep 1; done
-    return 1
-}
-
-api_latest_tag() {
-    curl -s -m 15 -o /dev/null -w '%{redirect_url}' "https://github.com/$API_REPO/releases/latest" 2>/dev/null \
-        | sed -n 's|.*/tag/||p' | tr -d '[:space:]'
-}
+api_wait_up() { wait_until 30 api_up; }
 
 api_fetch() {  # api_fetch версия папка -> API_PKG = папка с файлом apimain
     local tag="$1" dest="$2" a bin
@@ -663,7 +619,7 @@ api_put_files() {  # api_put_files папка_с_apimain : conf, data и runtime
 api_write_env() {  # настройки программы: адреса, ключ, порт
     local addr key la
     addr=$(conf_value ADDR); key=$(cat "$DATA_DIR/id_ed25519.pub" 2>/dev/null)
-    if api_tls_on; then la="127.0.0.1:$API_LOCAL_PORT"; else la="0.0.0.0:$API_PORT"; fi
+    if api_tls_on; then la="127.0.0.1:$API_LOCAL_PORT"; else la="0.0.0.0:$(api_port)"; fi
     cat > "$API_ENV" <<EEOF
 RUSTDESK_API_LANG="en"
 RUSTDESK_API_APP_WEB_CLIENT="0"
@@ -674,7 +630,6 @@ RUSTDESK_API_RUSTDESK_API_SERVER="$(api_url)"
 RUSTDESK_API_RUSTDESK_KEY="${key}"
 EEOF
     chown root:rustdesk-api "$API_ENV"; chmod 640 "$API_ENV"
-    # публичный ключ ещё и файлом (так его читает сама программа), и адрес прослушивания в конфиге
     mkdir -p "$API_DIR/conf/data"
     printf '%s' "$key" > "$API_DIR/conf/data/id_ed25519.pub"
     chown -R rustdesk-api:rustdesk-api "$API_DIR/conf/data"
@@ -682,30 +637,7 @@ EEOF
 }
 
 api_write_units() {
-    cat > "$UNIT_DIR/$SVC_A.service" <<UEOF
-[Unit]
-Description=RustDesk API server (вход и адресная книга)
-After=network-online.target ${SVC_S}.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=rustdesk-api
-Group=rustdesk-api
-WorkingDirectory=${API_DIR}
-EnvironmentFile=${API_ENV}
-ExecStart=${API_DIR}/apimain
-Restart=always
-RestartSec=5
-MemoryMax=300M
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=full
-
-[Install]
-WantedBy=multi-user.target
-UEOF
+    write_service "$SVC_A" "RustDesk API server (вход и адресная книга)" "$SVC_S.service" "$API_DIR/apimain" rustdesk-api "$API_DIR" "$API_ENV"
     systemctl daemon-reload
 }
 
@@ -721,7 +653,7 @@ events { worker_connections 256; }
 http {
     access_log off;
     server {
-        listen ${API_PORT} ssl;
+        listen $(api_port) ssl;
         server_name ${d};
         ssl_certificate ${CERT_ROOT}/${d}/fullchain.pem;
         ssl_certificate_key ${CERT_ROOT}/${d}/private.key;
@@ -798,7 +730,7 @@ api_ensure_nginx() {
     return 0
 }
 
-api_apply() {  # применяет настройки из $API_CONF: файлы, службы, порт
+api_apply() {  # применяет настройки из $API_CONF: файлы, службы, порт; $1 = прежний порт (его правило закрывается)
     api_write_env || return 1
     api_write_units
     if api_tls_on; then
@@ -807,11 +739,8 @@ api_apply() {  # применяет настройки из $API_CONF: файл�
     else
         systemctl disable --now "$SVC_AT" "$SVC_ATR.timer" >/dev/null 2>&1
     fi
-    if ufw_active; then
-        ufw allow "$API_PORT/tcp" >/dev/null 2>&1
-    elif command -v iptables >/dev/null; then
-        ipt_add tcp "$API_PORT"; ipt_save
-    fi
+    [[ -n "$1" && "$1" != "$(api_port)" ]] && fw_rule close tcp "$1"
+    fw_rule open tcp "$(api_port)"
     systemctl enable "$SVC_A" >/dev/null 2>&1
     systemctl restart "$SVC_A"
     if api_tls_on; then
@@ -861,11 +790,32 @@ api_guess_domain() {  # домен по умолчанию: прежний; за
     return 1
 }
 
+port_busy() {  # порт слушает кто-то, кроме нашего же nginx
+    ss -H -ltn "sport = :$1" 2>/dev/null | grep -q . || return 1
+    [[ "$(api_port)" == "$1" ]] && api_tls_on && systemctl is-active --quiet "$SVC_AT" && return 1
+    return 0
+}
+
+api_choose_port() {  # порт для клиентов при HTTPS -> API_PORT_NEW (Enter = 443, если свободен)
+    local def="$API_PORT_DEFAULT" p
+    port_busy 443 || def=443
+    echo "Порт для клиентов: 443 - стандартный HTTPS, порт в адресе писать не нужно (сейчас $(port_busy 443 && echo ЗАНЯТ || echo свободен))."
+    echo "Любой другой порт, например $API_PORT_DEFAULT, придётся писать в адресе клиента."
+    while true; do
+        read -rp "Порт для клиентов [Enter = $def]: " p || return 1
+        p="${p:-$def}"
+        if ! [[ "$p" =~ ^[0-9]+$ ]] || (( p < 1 || p > 65535 )) || [[ " 22 21115 21116 21117 $API_LOCAL_PORT " == *" $p "* ]]; then
+            echo -e "${RED}Нужно число от 1 до 65535, кроме 22 и портов RustDesk (21115-21117, $API_LOCAL_PORT).${NC}"; continue
+        fi
+        if port_busy "$p"; then echo -e "${RED}Порт $p уже занят другой программой, выберите другой.${NC}"; continue; fi
+        API_PORT_NEW="$p"; return 0
+    done
+}
+
 api_choose_mode() {  # спрашивает домен и решает, будет ли HTTPS -> API_DOMAIN_NEW, API_TLS_NEW
     local def d
     def=$(api_guess_domain) || def=""
-    echo "Для входа через Google и безопасной передачи пароля нужен домен, который указывает на этот сервер,"
-    echo "и сертификат от ssl.sh (папка ${CERT_ROOT}/<домен>/)."
+    echo "Для Google и безопасного пароля нужен домен, указывающий на этот сервер, и сертификат от ssl.sh (папка ${CERT_ROOT}/<домен>/)."
     [[ -d "$CERT_ROOT" ]] && ls -1t "$CERT_ROOT" 2>/dev/null | sed 's/^/   сертификат есть для: /'
     [[ -n "$def" ]] && echo "Домен определён автоматически: $def"
     while true; do
@@ -879,7 +829,7 @@ api_choose_mode() {  # спрашивает домен и решает, буде
         if [[ -z "$d" || "$d" =~ ^[A-Za-z0-9.-]+$ ]]; then break; fi
         echo -e "${RED}Нужен домен (буквы, цифры, точки, дефис).${NC}"
     done
-    API_DOMAIN_NEW="$d"; API_TLS_NEW=0
+    API_DOMAIN_NEW="$d"; API_TLS_NEW=0; API_PORT_NEW="$API_PORT_DEFAULT"
     if [[ -z "$d" ]]; then
         echo -e "${YELLOW}Без домена HTTPS не будет: пароль пойдёт по сети открытым текстом, вход через Google недоступен.${NC}"
         ask_yn "Всё равно продолжить без HTTPS?" n || return 1
@@ -900,7 +850,8 @@ api_choose_mode() {  # спрашивает домен и решает, буде
             return 0
         fi
         API_TLS_NEW=1
-        return 0
+        api_choose_port
+        return $?
     fi
     echo -e "${YELLOW}Сертификата для $d нет. Выпустите его: sudo bash ssl.sh -> пункт 1, потом вернитесь сюда.${NC}"
     ask_yn "Продолжить без HTTPS сейчас? (HTTPS можно включить позже пунктом 5 этого раздела)" n || return 1
@@ -917,8 +868,10 @@ api_show() {
     echo -e "Сервер API для настроек RustDesk : ${YELLOW}${url}${NC}"
     echo -e "Админка                          : ${YELLOW}${url}/_admin/${NC}  (логин admin; пароль вы задали при установке, забыли: пункт 4)"
     echo -e "${CYAN}=================================================${NC}"
-    echo "1) Пользователь. Зайдите в админку и создайте обычного пользователя (раздел пользователей). Под admin в клиентах лучше не входить."
-    echo "2) Клиент. Приложение RustDesk -> Настройки -> Сеть -> «Разблокировать» -> «Сервер API»: впишите адрес выше целиком, вместе с портом :21114 (без порта клиент идёт на 443 и получает отказ) -> «Применить»."
+    echo "1) Пользователь. В админке создайте обычного пользователя (раздел пользователей). Под admin в клиентах лучше не входить."
+    local pnote="вместе с портом :$(api_port) (без порта клиент идёт на 443 и получает отказ)"
+    api_tls_on && [[ "$(api_port)" == "443" ]] && pnote="порт не нужен (443 - стандартный HTTPS)"
+    echo "2) Клиент. Приложение RustDesk -> Настройки -> Сеть -> «Разблокировать» -> «Сервер API»: впишите адрес выше целиком, $pnote -> «Применить»."
     echo "   Затем откройте вкладку адресной книги / кнопку «Войти» и войдите созданным пользователем."
     echo "   После входа адреса ID-сервера, ретранслятора и ключ клиент получит сам."
     if api_tls_on; then
@@ -942,8 +895,7 @@ api_install() {
     if [[ ! -s "$DATA_DIR/id_ed25519.pub" ]]; then
         echo -e "${RED}Сначала установите сам сервер RustDesk (пункт 1 главного меню).${NC}"; return 1
     fi
-    case "$(uname -m)" in x86_64|amd64|aarch64|arm64) ;; *) echo -e "${RED}Этот тип процессора не поддерживается.${NC}"; return 1 ;; esac
-    echo "Это сторонняя программа lejianwen/rustdesk-api (не от RustDesk). Она хранит логины и список ваших устройств, поэтому обновляйте её вовремя."
+    echo "Это сторонняя программа lejianwen/rustdesk-api (не от RustDesk). Она хранит логины и список устройств, обновляйте её вовремя."
     if api_installed; then
         ask_yn "Уже установлено (версия $(kv_get "$API_CONF" API_VERSION)). Переустановить? Пользователи и адресные книги сохранятся" n || { echo "Отменено."; return 0; }
     fi
@@ -969,11 +921,13 @@ api_install() {
         rm -rf "$tmp"; return 1
     fi
     rm -rf "$tmp"
+    local oldport; oldport=$(api_port)
     kv_set "$API_CONF" API_DOMAIN "$API_DOMAIN_NEW"
     kv_set "$API_CONF" API_TLS "$API_TLS_NEW"
+    kv_set "$API_CONF" API_PORT "$API_PORT_NEW"
     kv_set "$API_CONF" API_VERSION "$tag"
     echo "Настраиваю и запускаю..."
-    if ! api_apply; then
+    if ! api_apply "$oldport"; then
         echo -e "${RED}Программа не ответила за 30 секунд. Смотрите журнал: пункт 3 этого раздела.${NC}"
         return 1
     fi
@@ -985,7 +939,7 @@ api_install() {
             echo -e "   ${YELLOW}${API_PW_NEW}${NC}"
         fi
     else
-        echo -e "${YELLOW}Не удалось задать пароль администратора. Первый пароль программа выводит в журнал: journalctl -u ${SVC_A} | head -n 40, или задайте свой: пункт 4 этого раздела.${NC}"
+        echo -e "${YELLOW}Не удалось задать пароль администратора. Первый пароль есть в журнале (journalctl -u ${SVC_A} | head -n 40), или задайте свой: пункт 4.${NC}"
     fi
     echo -e "${GREEN}✅ Установка завершена. Версия: $tag${NC}"
     api_show
@@ -994,15 +948,8 @@ api_install() {
 api_status() {
     echo -e "\n${YELLOW}📊 [СТАТУС API-СЕРВЕРА]${NC}"
     if ! api_installed; then echo "Не установлен (пункт 1 этого раздела)."; return; fi
-    local mem s
     echo "Версия: $(kv_get "$API_CONF" API_VERSION); сервер API для настроек RustDesk: $(api_url)"
-    local list=("$SVC_A")
-    api_tls_on && list+=("$SVC_AT")
-    for s in "${list[@]}"; do
-        mem=$(systemctl show -p MemoryCurrent --value "$s" 2>/dev/null)
-        [[ "$mem" =~ ^[0-9]+$ ]] && mem="$((mem / 1048576)) МБ" || mem="?"
-        echo "Служба $s: $(systemctl is-active "$s") (автозапуск: $(systemctl is-enabled "$s" 2>/dev/null)), память $mem"
-    done
+    svc_line "$SVC_A"; api_tls_on && svc_line "$SVC_AT"
     if api_up; then echo "Программа отвечает: да"; else echo -e "${RED}Программа отвечает: нет${NC}"; fi
     if api_tls_on; then
         local d end
@@ -1036,10 +983,12 @@ api_enable_https() {
     api_installed || { echo -e "${RED}Сначала установите (пункт 1 этого раздела).${NC}"; return 1; }
     echo -e "\n${YELLOW}=== Подключить HTTPS (сертификат из ssl.sh) ===${NC}"
     api_choose_mode || { echo "Отменено."; return 0; }
+    local oldport; oldport=$(api_port)
     kv_set "$API_CONF" API_DOMAIN "$API_DOMAIN_NEW"
     kv_set "$API_CONF" API_TLS "$API_TLS_NEW"
+    kv_set "$API_CONF" API_PORT "$API_PORT_NEW"
     echo "Применяю..."
-    if api_apply; then
+    if api_apply "$oldport"; then
         echo -e "${GREEN}✅ Готово.${NC} Не забудьте поменять «Сервер API» в клиентах на новый адрес."
         api_show
     else
@@ -1091,7 +1040,7 @@ api_update() {
 api_remove() {
     echo -e "\n${YELLOW}🗑️ [УДАЛЕНИЕ API-СЕРВЕРА]${NC}"
     if ! api_installed && [[ ! -d "$API_DIR" && ! -f "$API_CONF" ]]; then echo -e "${GREEN}Удалять нечего.${NC}"; return; fi
-    ask_yn "Удалить API-сервер (программу, службы, настройки, правило порта $API_PORT)?" n || { echo "Отменено."; return; }
+    ask_yn "Удалить API-сервер (программу, службы, настройки, правило порта $(api_port))?" n || { echo "Отменено."; return; }
     local drop=0
     if [[ -d "$API_DIR/data" ]]; then
         echo "База с пользователями и адресными книгами лежит в $API_DIR/data."
@@ -1100,8 +1049,7 @@ api_remove() {
     systemctl disable --now "$SVC_A" "$SVC_AT" "$SVC_ATR.timer" >/dev/null 2>&1
     rm -f "$UNIT_DIR/$SVC_A.service" "$UNIT_DIR/$SVC_AT.service" "$UNIT_DIR/$SVC_ATR.service" "$UNIT_DIR/$SVC_ATR.timer"
     systemctl daemon-reload
-    if ufw_active; then ufw --force delete allow "$API_PORT/tcp" >/dev/null 2>&1; fi
-    if command -v iptables >/dev/null; then ipt_del tcp "$API_PORT"; ipt_save; fi
+    fw_rule close tcp "$(api_port)"
     rm -rf "$API_NGINX_DIR" "$API_ENV" "$API_DIR.bak"
     if [[ "$(kv_get "$API_CONF" NGINX_ADDED)" == "1" && ! -e /etc/jackett-cert/nginx.conf ]]; then
         apt-get remove -y nginx >/dev/null 2>&1
