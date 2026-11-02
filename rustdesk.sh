@@ -2,18 +2,9 @@
 # =====================================================================
 #  RustDesk Server: свой сервер удалённого доступа (hbbs + hbbr)
 #  Запуск:  sudo bash rustdesk.sh      (на самом сервере Oracle)
-#
-#  Что делает:
-#    - ставит официальные файлы hbbs и hbbr напрямую (без Docker), как службы systemd;
-#      работает и на Micro (AMD), и на Ampere (ARM): тип процессора определяется сам;
-#    - режим "только по ключу" (-k _): без вашего ключа никто не подключится;
-#    - открывает порты 21115-21117 (TCP) и 21116 (UDP): через ufw, если он включён,
-#      иначе через iptables (сохраняет правила);
-#    - автообновление раз в неделю с автоматическим откатом, если новая версия не запустилась;
-#    - можно забрать ключ из старой установки через Docker (клиентам ничего менять не придётся);
-#    - пункт 9: API-сервер (lejianwen/rustdesk-api) для входа в аккаунт и общей адресной книги,
-#      по желанию с кнопкой входа через Google (HTTPS на вашем домене, сертификат делает ssl.sh);
-#    - удаляется одним пунктом меню.
+#  Без Docker, службами systemd; Micro (AMD) и Ampere (ARM) определяются сами; только по ключу (-k _);
+#  порты через ufw или iptables; автообновление раз в неделю с откатом; перенос ключа из Docker-установки;
+#  пункт 9: API-сервер (lejianwen/rustdesk-api) для входа в аккаунт, адресной книги и Google.
 # =====================================================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -839,16 +830,44 @@ api_refresh() {  # после смены адреса/ключа сервера:
 
 api_gen_password() { tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 16; }
 
+api_read_password() {  # спрашивает пароль админки -> API_PW_NEW; API_PW_OWN=1, если ввели свой
+    local p1 p2
+    API_PW_OWN=0; API_PW_NEW=""
+    echo "Пароль администратора (логин admin): введите свой, минимум 8 символов, или нажмите Enter, и я придумаю случайный."
+    while true; do
+        read -rsp "Пароль: " p1 || return 1; echo
+        if [[ -z "$p1" ]]; then API_PW_NEW=$(api_gen_password); return 0; fi
+        if (( ${#p1} < 8 )); then echo -e "${RED}Слишком короткий, минимум 8 символов. Введите ещё раз.${NC}"; continue; fi
+        read -rsp "Повторите пароль: " p2 || return 1; echo
+        if [[ "$p1" != "$p2" ]]; then echo -e "${RED}Пароли не совпали. Введите ещё раз.${NC}"; continue; fi
+        API_PW_NEW="$p1"; API_PW_OWN=1
+        return 0
+    done
+}
+
 api_set_password() {  # api_set_password пароль
     runuser -u rustdesk-api -- bash -c 'set -a; . "$1"; set +a; cd "$2" && ./apimain reset-admin-pwd "$3"' _ "$API_ENV" "$API_DIR" "$1" >/dev/null 2>&1
 }
 
+api_guess_domain() {  # домен по умолчанию: прежний; затем адрес сервера (если это домен с сертификатом); затем самый новый сертификат ssl.sh
+    local d a
+    d=$(kv_get "$API_CONF" API_DOMAIN)
+    if [[ -n "$d" ]]; then echo "$d"; return 0; fi
+    a=$(conf_value ADDR)
+    if [[ -n "$a" ]] && ! valid_ip "$a" && [[ -s "$CERT_ROOT/$a/fullchain.pem" && -s "$CERT_ROOT/$a/private.key" ]]; then echo "$a"; return 0; fi
+    for d in $(ls -1t "$CERT_ROOT" 2>/dev/null); do
+        if [[ -s "$CERT_ROOT/$d/fullchain.pem" && -s "$CERT_ROOT/$d/private.key" ]]; then echo "$d"; return 0; fi
+    done
+    return 1
+}
+
 api_choose_mode() {  # спрашивает домен и решает, будет ли HTTPS -> API_DOMAIN_NEW, API_TLS_NEW
-    local def d ans
-    def=$(kv_get "$API_CONF" API_DOMAIN)
+    local def d
+    def=$(api_guess_domain) || def=""
     echo "Для входа через Google и безопасной передачи пароля нужен домен, который указывает на этот сервер,"
     echo "и сертификат от ssl.sh (папка ${CERT_ROOT}/<домен>/)."
-    [[ -d "$CERT_ROOT" ]] && ls -1 "$CERT_ROOT" 2>/dev/null | sed 's/^/   сертификат есть для: /'
+    [[ -d "$CERT_ROOT" ]] && ls -1t "$CERT_ROOT" 2>/dev/null | sed 's/^/   сертификат есть для: /'
+    [[ -n "$def" ]] && echo "Домен определён автоматически: $def"
     while true; do
         if [[ -n "$def" ]]; then
             read -rp "Домен для API-сервера [Enter = $def, «-» = без домена]: " d || return 1
@@ -895,8 +914,8 @@ api_show() {
     echo -e "\n${CYAN}=================================================${NC}"
     echo -e "${GREEN} API-СЕРВЕР: ВХОД И АДРЕСНАЯ КНИГА${NC}"
     echo -e "${CYAN}=================================================${NC}"
-    echo -e "Сервер API (для клиентов) : ${YELLOW}${url}${NC}"
-    echo -e "Админка                   : ${YELLOW}${url}/_admin/${NC}  (логин admin; пароль вы получили при установке, забыли: пункт 4)"
+    echo -e "Сервер API для настроек RustDesk : ${YELLOW}${url}${NC}"
+    echo -e "Админка                          : ${YELLOW}${url}/_admin/${NC}  (логин admin; пароль вы задали при установке, забыли: пункт 4)"
     echo -e "${CYAN}=================================================${NC}"
     echo "1) Пользователь. Зайдите в админку и создайте обычного пользователя (раздел пользователей). Под admin в клиентах лучше не входить."
     echo "2) Клиент. Приложение RustDesk -> Настройки -> Сеть -> «Разблокировать» -> «Сервер API»: впишите адрес выше -> «Применить»."
@@ -915,7 +934,7 @@ api_show() {
     else
         echo -e "${YELLOW}HTTPS выключен: пароль идёт по сети открытым текстом, кнопка Google недоступна. Включить: пункт 5 этого раздела.${NC}"
     fi
-    echo "Если интерфейс админки окажется на китайском, язык переключается в самой панели."
+    echo "Язык админки: программа поддерживает только английский и китайский, скрипт ставит английский."
 }
 
 api_install() {
@@ -930,8 +949,10 @@ api_install() {
         ask_yn "Уже установлено (версия $(kv_get "$API_CONF" API_VERSION)). Переустановить? Пользователи и адресные книги сохранятся" n || { echo "Отменено."; return 0; }
     fi
     api_choose_mode || { echo "Отменено."; return 0; }
+    echo
+    api_read_password || { echo "Отменено."; return 0; }
     ensure_deps || return 1
-    local tag tmp pw
+    local tag tmp
     echo "Узнаю последнюю версию..."
     tag=$(api_latest_tag)
     [[ -n "$tag" ]] || { echo -e "${RED}Нет связи с GitHub, версию узнать не удалось. Попробуйте позже.${NC}"; return 1; }
@@ -957,12 +978,15 @@ api_install() {
         echo -e "${RED}Программа не ответила за 30 секунд. Смотрите журнал: пункт 3 этого раздела.${NC}"
         return 1
     fi
-    pw=$(api_gen_password)
-    if [[ -n "$pw" ]] && api_set_password "$pw"; then
-        echo -e "\n${GREEN}Пароль администратора (логин admin). Он показан только сейчас, сохраните его:${NC}"
-        echo -e "   ${YELLOW}${pw}${NC}"
+    if [[ -n "$API_PW_NEW" ]] && api_set_password "$API_PW_NEW"; then
+        if (( API_PW_OWN )); then
+            echo -e "\n${GREEN}Пароль администратора (логин admin) задан: тот, что вы ввели.${NC}"
+        else
+            echo -e "\n${GREEN}Пароль администратора (логин admin). Он показан только сейчас, сохраните его:${NC}"
+            echo -e "   ${YELLOW}${API_PW_NEW}${NC}"
+        fi
     else
-        echo -e "${YELLOW}Не удалось задать пароль администратора сам. Первый пароль программа выводит в журнал: journalctl -u ${SVC_A} | head -n 40, или задайте свой: пункт 4.${NC}"
+        echo -e "${YELLOW}Не удалось задать пароль администратора. Первый пароль программа выводит в журнал: journalctl -u ${SVC_A} | head -n 40, или задайте свой: пункт 4 этого раздела.${NC}"
     fi
     echo -e "${GREEN}✅ Установка завершена. Версия: $tag${NC}"
     api_show
@@ -972,7 +996,7 @@ api_status() {
     echo -e "\n${YELLOW}📊 [СТАТУС API-СЕРВЕРА]${NC}"
     if ! api_installed; then echo "Не установлен (пункт 1 этого раздела)."; return; fi
     local mem s
-    echo "Версия: $(kv_get "$API_CONF" API_VERSION); адрес для клиентов: $(api_url)"
+    echo "Версия: $(kv_get "$API_CONF" API_VERSION); сервер API для настроек RustDesk: $(api_url)"
     local list=("$SVC_A")
     api_tls_on && list+=("$SVC_AT")
     for s in "${list[@]}"; do
@@ -999,19 +1023,11 @@ api_status() {
 
 api_password_change() {
     api_installed || { echo -e "${RED}Сначала установите (пункт 1 этого раздела).${NC}"; return 1; }
-    local p1 p2
-    echo "Новый пароль для admin. Минимум 8 символов. Enter без ввода = придумать случайный."
-    read -rsp "Пароль: " p1 || return 1; echo
-    if [[ -z "$p1" ]]; then
-        p1=$(api_gen_password)
-    else
-        if (( ${#p1} < 8 )); then echo -e "${RED}Слишком короткий.${NC}"; return 1; fi
-        read -rsp "Повторите пароль: " p2 || return 1; echo
-        [[ "$p1" == "$p2" ]] || { echo -e "${RED}Пароли не совпали.${NC}"; return 1; }
-    fi
-    if api_set_password "$p1"; then
+    echo -e "\n${YELLOW}=== Сменить пароль администратора ===${NC}"
+    api_read_password || { echo "Отменено."; return 0; }
+    if api_set_password "$API_PW_NEW"; then
         echo -e "${GREEN}✅ Пароль admin изменён.${NC}"
-        [[ -z "$p2" ]] && echo -e "Новый пароль: ${YELLOW}${p1}${NC} (сохраните сейчас)"
+        (( API_PW_OWN )) || echo -e "Новый пароль: ${YELLOW}${API_PW_NEW}${NC} (сохраните сейчас)"
     else
         echo -e "${RED}Не удалось сменить пароль. Смотрите журнал: пункт 3 этого раздела.${NC}"
     fi
