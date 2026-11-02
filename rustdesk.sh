@@ -3,8 +3,7 @@
 #  RustDesk Server: свой сервер удалённого доступа (hbbs + hbbr)
 #  Запуск:  sudo bash rustdesk.sh      (на самом сервере Oracle)
 #  Без Docker, службами systemd; Micro (AMD) и Ampere (ARM) определяются сами; только по ключу (-k _);
-#  порты через ufw или iptables; автообновление раз в неделю с откатом; перенос ключа из Docker-установки;
-#  пункт 9: API-сервер (lejianwen/rustdesk-api) для входа в аккаунт, адресной книги и Google.
+#  порты через ufw или iptables; автообновление с откатом; пункт 9: API-сервер (вход, адресная книга, Google).
 # =====================================================================
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -33,12 +32,12 @@ API_DIR="/opt/rustdesk-api"
 API_CONF="/etc/rustdesk-api.conf"
 API_ENV="/etc/rustdesk-api.env"
 API_NGINX_DIR="/etc/rustdesk-api"
-CERT_ROOT="/root/my_cert"                  # сюда ssl.sh кладёт сертификаты: /root/my_cert/<домен>/
+CERT_ROOT="/root/my_cert"                
 SVC_A="rustdesk-api"
 SVC_AT="rustdesk-api-tls"
 SVC_ATR="rustdesk-api-tls-reload"
-API_PORT_DEFAULT=21114                     # порт для клиентов без HTTPS (с HTTPS можно выбрать 443)
-API_LOCAL_PORT=21124                       # внутренний порт за nginx (только при HTTPS)
+API_PORT_DEFAULT=21114
+API_LOCAL_PORT=21124
 
 # ---------------------------------------------------------------- вспомогательное
 
@@ -62,9 +61,6 @@ conf_set()   { kv_set "$CONF" "$1" "$2"; }
 
 ulog() {  # запись в журнал обновлений и на экран
     echo "$*"
-    if [[ -f "$UPD_LOG" && $(stat -c %s "$UPD_LOG" 2>/dev/null || echo 0) -gt 200000 ]]; then
-        tail -n 200 "$UPD_LOG" > "$UPD_LOG.tmp" && mv -f "$UPD_LOG.tmp" "$UPD_LOG"
-    fi
     echo "$(date '+%F %T') $*" >> "$UPD_LOG"
 }
 
@@ -72,7 +68,7 @@ is_installed() { [[ -x "$BIN_DIR/hbbs" && -x "$BIN_DIR/hbbr" && -f "$UNIT_DIR/$S
 svc_active()   { systemctl is-active --quiet "$1"; }
 autoupdate_on_now() { systemctl is-enabled --quiet "$SVC_U.timer" 2>/dev/null; }
 
-asset_arch() {  # имя архитектуры в названии файла релиза
+asset_arch() {
     case "$(uname -m)" in
         x86_64|amd64)  echo "amd64" ;;
         aarch64|arm64) echo "arm64v8" ;;
@@ -82,8 +78,8 @@ asset_arch() {  # имя архитектуры в названии файла �
 
 describe_server() {
     case "$(uname -m)" in
-        aarch64|arm64) echo "Сервер: ARM (Ampere); процессор $(uname -m)" ;;
-        x86_64|amd64)  echo "Сервер: AMD (Micro); процессор $(uname -m)" ;;
+        aarch64|arm64) echo "Сервер: ARM (Ampere)" ;;
+        x86_64|amd64)  echo "Сервер: AMD (Micro)" ;;
         *)             echo "Сервер: процессор $(uname -m) (не поддерживается)" ;;
     esac
 }
@@ -101,7 +97,7 @@ ensure_deps() {
 
 valid_ip() { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; }
 
-get_ip() {  # публичный IPv4: метаданные Oracle, затем несколько сайтов
+get_ip() {
     local ip s
     ip=$(curl -s -m 3 -H "Authorization: Bearer Oracle" http://169.254.169.254/opc/v2/vnics/ 2>/dev/null \
          | grep -o '"publicIp" *: *"[0-9.]*"' | head -n 1 | grep -o '[0-9.]\{7,15\}')
@@ -155,7 +151,7 @@ fetch_release() {  # fetch_release версия папка -> в папке ле
     return 0
 }
 
-put_bins() {  # put_bins папка_с_файлами : заменяет файлы без ошибки "Text file busy"
+put_bins() {
     local src="$1" b
     mkdir -p "$BIN_DIR"
     for b in hbbs hbbr; do
@@ -276,7 +272,7 @@ UEOF
     systemctl daemon-reload
 }
 
-sync_self() {  # копия этого скрипта нужна службе автообновления
+sync_self() {
     [[ -f "$0" ]] || return 1
     [[ "$(readlink -f "$0")" == "$SELF" ]] && return 0
     install -m 755 "$0" "$SELF"
@@ -284,7 +280,7 @@ sync_self() {  # копия этого скрипта нужна службе а
 
 autoupdate_enable() {
     if ! sync_self && [[ ! -x "$SELF" ]]; then
-        echo -e "${YELLOW}Не удалось сохранить копию скрипта для автообновления. Запустите его из файла: sudo bash rustdesk.sh${NC}"
+        echo -e "${YELLOW}Нет копии скрипта для автообновления. Запускайте из файла: sudo bash rustdesk.sh${NC}"
         return 1
     fi
     write_update_units
@@ -293,7 +289,7 @@ autoupdate_enable() {
 
 autoupdate_disable() { systemctl disable --now "$SVC_U.timer" >/dev/null 2>&1; }
 
-wait_both_active() {  # ждёт несколько секунд, что обе службы живы
+wait_both_active() {
     local i
     sleep 6
     for i in 1 2 3 4; do
@@ -305,7 +301,7 @@ wait_both_active() {  # ждёт несколько секунд, что обе 
 
 wait_until() { local i; for i in $(seq 1 "$1"); do "${@:2}" && return 0; sleep 1; done; return 1; }   # wait_until секунд команда...
 wait_key()   { wait_until 30 test -s "$DATA_DIR/id_ed25519.pub"; }
-svc_line() {  # строка статуса службы
+svc_line() {
     local m; m=$(systemctl show -p MemoryCurrent --value "$1" 2>/dev/null)
     [[ "$m" =~ ^[0-9]+$ ]] && m="$((m / 1048576)) МБ" || m="?"
     echo "Служба $1: $(systemctl is-active "$1") (автозапуск: $(systemctl is-enabled "$1" 2>/dev/null)), память $m"
@@ -321,13 +317,13 @@ migrate_old() {
         fi
     fi
     if command -v docker >/dev/null && timeout 10 docker ps --format '{{.Names}}' 2>/dev/null | grep -qE '^(hbbs|hbbr)$'; then
-        echo -e "\n${YELLOW}Работают старые контейнеры hbbs/hbbr: они занимают те же порты.${NC}"
+        echo -e "\n${YELLOW}Работают старые контейнеры hbbs/hbbr (те же порты).${NC}"
         if ask_yn "Остановить их и выключить автозапуск?" y; then
             docker update --restart=no hbbs hbbr >/dev/null 2>&1
             docker stop hbbs hbbr >/dev/null 2>&1
-            echo "Старые контейнеры остановлены. Папку ${OLD_DIR} не трогал: удалите её сами, когда всё заработает."
+            echo "Старые контейнеры остановлены (папку ${OLD_DIR} не трогал)."
         else
-            echo -e "${RED}Пока они работают, новый сервер не сможет занять порты.${NC}"
+            echo -e "${RED}Пока они работают, новый сервер не займёт порты.${NC}"
         fi
     fi
 }
@@ -373,7 +369,7 @@ do_install() {
 
     echo "Узнаю последнюю версию..."
     tag=$(latest_tag)
-    [[ -n "$tag" ]] || { echo -e "${RED}Нет связи с GitHub, версию узнать не удалось. Попробуйте позже.${NC}"; return 1; }
+    [[ -n "$tag" ]] || { echo -e "${RED}Нет связи с GitHub. Попробуйте позже.${NC}"; return 1; }
     tmp=$(mktemp -d)
     echo "Скачиваю версию $tag ($a)..."
     if ! fetch_release "$tag" "$tmp"; then
@@ -403,7 +399,7 @@ do_install() {
     api_refresh   # если API-сервер уже стоит, он получит актуальные адрес и ключ
 
     if autoupdate_enable; then
-        echo "Автообновление включено (раз в неделю, ночью с воскресенья)."
+        echo "Автообновление включено (раз в неделю)."
     fi
     echo -e "${GREEN}✅ Установка завершена. Версия: $tag${NC}"
     show_data
@@ -426,10 +422,7 @@ show_status() {
     fi
     echo "Журнал служб (последние записи):"
     journalctl -u "$SVC_S" -u "$SVC_R" -n 8 --no-pager -o short 2>/dev/null | sed 's/^/   /'
-    if [[ -f "$UPD_LOG" ]]; then
-        echo "Журнал обновлений (последние записи):"
-        tail -n 5 "$UPD_LOG" | sed 's/^/   /'
-    fi
+    [[ -f "$UPD_LOG" ]] && { echo "Журнал обновлений:"; tail -n 5 "$UPD_LOG" | sed 's/^/   /'; }
 }
 
 do_restart() {
@@ -489,7 +482,7 @@ do_update_now() {
     is_installed || { echo -e "${RED}Сначала установите (пункт 1).${NC}"; return 1; }
     ensure_deps || return 1
     echo "Проверяю обновления..."
-    do_update manual && echo -e "${GREEN}Готово.${NC}" || echo -e "${YELLOW}Обновление не выполнено, подробности выше и в журнале (пункт 3).${NC}"
+    do_update manual && echo -e "${GREEN}Готово.${NC}" || echo -e "${YELLOW}Обновление не выполнено (подробности в журнале, пункт 3).${NC}"
 }
 
 do_toggle_autoupdate() {
@@ -498,7 +491,7 @@ do_toggle_autoupdate() {
         autoupdate_disable
         echo -e "${GREEN}Автообновление выключено.${NC}"
     elif autoupdate_enable; then
-        echo -e "${GREEN}Автообновление включено: раз в неделю, ночью с воскресенья. Результат пишется в журнал (пункт 3).${NC}"
+        echo -e "${GREEN}Автообновление включено (раз в неделю, итог в журнале: пункт 3).${NC}"
     fi
 }
 
@@ -525,7 +518,7 @@ do_uninstall() {
     ask_yn "Удалить RustDesk Server (службы, программу, настройки, правила портов)?" n || { echo "Отменено."; return; }
     local drop_key=0
     if [[ -d "$DATA_DIR" ]]; then
-        echo "Ключ сервера лежит в $DATA_DIR. Если его удалить, ключ при новой установке будет другим, и его придётся вписывать во всех клиентах."
+        echo "Ключ сервера лежит в $DATA_DIR; если удалить, при новой установке ключ будет другим (менять во всех клиентах)."
         ask_yn "Удалить и ключ?" n && drop_key=1
     fi
     systemctl disable --now "$SVC_U.timer" "$SVC_S" "$SVC_R" >/dev/null 2>&1
@@ -542,12 +535,10 @@ do_uninstall() {
     fi
     rm -f "$SELF"
     echo -e "${GREEN}✅ Готово. RustDesk Server удалён.${NC}"
-    api_installed && echo -e "${YELLOW}API-сервер (пункт 9) не затронут: удалите его отдельно, если он больше не нужен.${NC}"
+    api_installed && echo -e "${YELLOW}API-сервер (пункт 9) не затронут, удалите его отдельно.${NC}"
 }
 
-# ================================================================ API-сервер: вход в аккаунт и адресная книга
-# Сторонняя программа lejianwen/rustdesk-api (не от RustDesk). Работает рядом с hbbs/hbbr,
-# ничего в них не меняет. Клиент подключается к ней через поле «Сервер API».
+# ======== API-сервер (сторонняя программа lejianwen/rustdesk-api): вход в аккаунт и адресная книга; клиент подключается через поле «Сервер API»
 
 kv_get() { awk -F= -v k="$2" '$1==k {sub(/^[^=]*=/,""); gsub(/^[ \t"]+|[ \t"]+$/,""); print; exit}' "$1" 2>/dev/null; }
 
@@ -574,7 +565,7 @@ api_url() {  # адрес, который вписывают в поле «Се�
     fi
 }
 
-api_up() {  # программа отвечает на внутреннем порту
+api_up() {
     local c
     c=$(curl -s -o /dev/null -m 4 -w '%{http_code}' "http://127.0.0.1:$(api_local_port)/_admin/" 2>/dev/null)
     [[ -n "$c" && "$c" != "000" && "$c" != "502" ]]
@@ -584,11 +575,7 @@ api_wait_up() { wait_until 30 api_up; }
 
 api_fetch() {  # api_fetch версия папка -> API_PKG = папка с файлом apimain
     local tag="$1" dest="$2" a bin
-    case "$(uname -m)" in
-        x86_64|amd64)  a="amd64" ;;
-        aarch64|arm64) a="arm64" ;;
-        *) return 1 ;;
-    esac
+    a=$(asset_arch) || return 1; a="${a/arm64v8/arm64}"
     curl -fL -s -m 240 --retry 2 -o "$dest/api.tar.gz" "https://github.com/$API_REPO/releases/download/$tag/linux-$a.tar.gz" || return 1
     mkdir -p "$dest/x"
     tar -xzf "$dest/api.tar.gz" -C "$dest/x" || return 1
@@ -682,35 +669,16 @@ Wants=${SVC_A}.service
 Type=simple
 ExecStartPre=${nginx_bin} -t -c ${API_NGINX_DIR}/nginx.conf
 ExecStart=${nginx_bin} -c ${API_NGINX_DIR}/nginx.conf -g 'daemon off;'
-ExecReload=/bin/kill -HUP \$MAINPID
 Restart=always
 RestartSec=5
+RuntimeMaxSec=86400
 MemoryMax=100M
 
 [Install]
 WantedBy=multi-user.target
 UEOF
-    # сертификат продлевается раз в ~2 месяца; раз в сутки nginx перечитывает файлы
-    cat > "$UNIT_DIR/$SVC_ATR.service" <<UEOF
-[Unit]
-Description=Перечитать сертификат для RustDesk API server
-
-[Service]
-Type=oneshot
-ExecStart=/bin/systemctl reload ${SVC_AT}.service
-UEOF
-    cat > "$UNIT_DIR/$SVC_ATR.timer" <<UEOF
-[Unit]
-Description=Ежедневное перечитывание сертификата для RustDesk API server
-
-[Timer]
-OnCalendar=daily
-RandomizedDelaySec=30min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-UEOF
+    # RuntimeMaxSec: раз в сутки nginx перезапускается сам и подхватывает продлённый сертификат
+    systemctl disable --now "$SVC_ATR.timer" >/dev/null 2>&1; rm -f "$UNIT_DIR/$SVC_ATR".*   # остатки прежней версии
     systemctl daemon-reload
 }
 
@@ -725,9 +693,7 @@ api_ensure_nginx() {
     apt-get install -y nginx >/dev/null 2>&1
     (( made )) && rm -f /usr/sbin/policy-rc.d
     command -v nginx >/dev/null || { echo -e "${RED}Не удалось поставить nginx.${NC}"; return 1; }
-    kv_set "$API_CONF" NGINX_ADDED 1
     systemctl disable --now nginx >/dev/null 2>&1   # стандартная служба nginx не нужна, у нас своя
-    return 0
 }
 
 api_apply() {  # применяет настройки из $API_CONF: файлы, службы, порт; $1 = прежний порт (его правило закрывается)
@@ -737,21 +703,17 @@ api_apply() {  # применяет настройки из $API_CONF: файл�
         api_ensure_nginx || return 1
         api_write_tls
     else
-        systemctl disable --now "$SVC_AT" "$SVC_ATR.timer" >/dev/null 2>&1
+        systemctl disable --now "$SVC_AT" >/dev/null 2>&1
     fi
     [[ -n "$1" && "$1" != "$(api_port)" ]] && fw_rule close tcp "$1"
     fw_rule open tcp "$(api_port)"
     systemctl enable "$SVC_A" >/dev/null 2>&1
     systemctl restart "$SVC_A"
-    if api_tls_on; then
-        systemctl enable "$SVC_AT" "$SVC_ATR.timer" >/dev/null 2>&1
-        systemctl restart "$SVC_AT"
-        systemctl start "$SVC_ATR.timer" >/dev/null 2>&1
-    fi
+    if api_tls_on; then systemctl enable "$SVC_AT" >/dev/null 2>&1; systemctl restart "$SVC_AT"; fi
     api_wait_up
 }
 
-api_refresh() {  # после смены адреса/ключа сервера: обновить настройки API (если он установлен)
+api_refresh() {
     api_installed || return 0
     api_write_env
     systemctl restart "$SVC_A"
@@ -759,19 +721,52 @@ api_refresh() {  # после смены адреса/ключа сервера:
 
 api_gen_password() { tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 16; }
 
-api_read_password() {  # спрашивает пароль админки (вводимое видно) -> API_PW_NEW
+api_read_password() {  # спрашивает пароль (вводимое видно) -> API_PW_NEW
     local p
-    echo "Пароль администратора (логин admin): введите свой, минимум 8 символов (вводимое видно), или нажмите Enter, и я придумаю случайный."
+    echo "Пароль (8-32 символа, вводимое видно). Enter без ввода = я придумаю случайный."
     while true; do
         read -rp "Пароль: " p || return 1
         if [[ -z "$p" ]]; then API_PW_NEW=$(api_gen_password); return 0; fi
-        if (( ${#p} >= 8 )); then API_PW_NEW="$p"; return 0; fi
-        echo -e "${RED}Слишком короткий, минимум 8 символов. Введите ещё раз.${NC}"
+        if (( ${#p} >= 8 && ${#p} <= 32 )); then API_PW_NEW="$p"; return 0; fi
+        echo -e "${RED}Нужно от 8 до 32 символов. Введите ещё раз.${NC}"
     done
 }
 
-api_set_password() {  # api_set_password пароль
-    runuser -u rustdesk-api -- bash -c 'set -a; . "$1"; set +a; cd "$2" && ./apimain reset-admin-pwd "$3"' _ "$API_ENV" "$API_DIR" "$1" >/dev/null 2>&1
+api_read_account() {  # имя пользователя и пароль (один аккаунт и для админки, и для RustDesk) -> API_USER_NEW, API_PW_NEW
+    local u def; def=$(api_user)
+    echo "Один аккаунт для входа и в админку, и в приложение RustDesk."
+    while true; do
+        read -rp "Имя пользователя [Enter = $def]: " u || return 1
+        u="${u:-$def}"
+        [[ "$u" =~ ^[A-Za-z0-9_.-]{3,32}$ ]] && break
+        echo -e "${RED}Имя: 3-32 символа, латиница, цифры, _ . -${NC}"
+    done
+    API_USER_NEW="$u"; api_read_password
+}
+
+api_user() { local u; u=$(kv_get "$API_CONF" API_USER); echo "${u:-admin}"; }
+api_set_password() {  # api_set_password номер_пользователя пароль
+    runuser -u rustdesk-api -- bash -c 'set -a; . "$1"; set +a; cd "$2" && ./apimain reset-pwd "$3" "$4"' _ "$API_ENV" "$API_DIR" "${1:-1}" "$2" >/dev/null 2>&1
+}
+
+api_call() {  # api_call путь [json] [токен] -> ответ админки программы
+    local h=(); [[ -n "$3" ]] && h=(-H "api-token: $3")
+    if [[ -n "$2" ]]; then curl -s -m 10 "${h[@]}" -H 'Content-Type: application/json' -d "$2" "http://127.0.0.1:$(api_local_port)/api/admin/$1"
+    else curl -s -m 10 "${h[@]}" "http://127.0.0.1:$(api_local_port)/api/admin/$1"; fi
+}
+api_login() { api_call login "{\"username\":\"$1\",\"password\":\"$2\"}" | sed -n 's/.*"token" *: *"\([^"]*\)".*/\1/p'; }
+
+api_setup_account() {  # api_setup_account имя пароль: встроенный admin (№1) получает это имя; если такой пользователь уже есть, он становится админом -> API_UID
+    local u="$1" pw="$2" tok id=1
+    API_UID=1
+    api_set_password 1 "$pw" || return 1
+    [[ "$u" == "admin" ]] && return 0
+    [[ -n "$(api_login "$u" "$pw")" ]] && return 0
+    tok=$(api_login admin "$pw"); [[ -n "$tok" ]] || return 1
+    id=$(api_call "user/list?page=1&page_size=100&username=$u" "" "$tok" | grep -o "{[^{}]*\"username\" *: *\"$u\"[^{}]*}" | head -n 1 | sed -n 's/.*"id" *: *\([0-9]*\).*/\1/p')
+    if [[ -n "$id" ]]; then api_set_password "$id" "$pw" || return 1; else id=1; fi
+    api_call user/update "{\"id\":$id,\"username\":\"$u\",\"nickname\":\"$u\",\"group_id\":1,\"status\":1,\"is_admin\":true}" "$tok" | grep -q '"code" *: *0' || return 1
+    API_UID="$id"
 }
 
 api_guess_domain() {  # домен по умолчанию: прежний; затем адрес сервера (если это домен с сертификатом); затем самый новый сертификат ssl.sh
@@ -786,7 +781,7 @@ api_guess_domain() {  # домен по умолчанию: прежний; за
     return 1
 }
 
-port_busy() {  # порт слушает кто-то, кроме нашего же nginx
+port_busy() {
     ss -H -ltn "sport = :$1" 2>/dev/null | grep -q . || return 1
     [[ "$(api_port)" == "$1" ]] && api_tls_on && systemctl is-active --quiet "$SVC_AT" && return 1
     return 0
@@ -795,8 +790,7 @@ port_busy() {  # порт слушает кто-то, кроме нашего ж
 api_choose_port() {  # порт для клиентов при HTTPS -> API_PORT_NEW (Enter = 443, если свободен)
     local def="$API_PORT_DEFAULT" p
     port_busy 443 || def=443
-    echo "Порт для клиентов: 443 - стандартный HTTPS, порт в адресе писать не нужно (сейчас $(port_busy 443 && echo ЗАНЯТ || echo свободен))."
-    echo "Любой другой порт, например $API_PORT_DEFAULT, придётся писать в адресе клиента."
+    echo "Порт для клиентов: 443 (стандартный HTTPS, в адресе не пишется; сейчас $(port_busy 443 && echo ЗАНЯТ || echo свободен)) или другой, например $API_PORT_DEFAULT (его придётся писать в адресе)."
     while true; do
         read -rp "Порт для клиентов [Enter = $def]: " p || return 1
         p="${p:-$def}"
@@ -811,7 +805,7 @@ api_choose_port() {  # порт для клиентов при HTTPS -> API_PORT
 api_choose_mode() {  # спрашивает домен и решает, будет ли HTTPS -> API_DOMAIN_NEW, API_TLS_NEW
     local def d
     def=$(api_guess_domain) || def=""
-    echo "Для Google и безопасного пароля нужен домен, указывающий на этот сервер, и сертификат от ssl.sh (папка ${CERT_ROOT}/<домен>/)."
+    echo "Для Google и безопасного пароля нужен домен на этот сервер и сертификат от ssl.sh (папка ${CERT_ROOT}/<домен>/)."
     [[ -d "$CERT_ROOT" ]] && ls -1t "$CERT_ROOT" 2>/dev/null | sed 's/^/   сертификат есть для: /'
     [[ -n "$def" ]] && echo "Домен определён автоматически: $def"
     while true; do
@@ -835,9 +829,9 @@ api_choose_mode() {  # спрашивает домен и решает, буде
     ip=$(get_ip) || ip=""
     dip=$(getent ahostsv4 "$d" 2>/dev/null | awk '{print $1; exit}')
     if [[ -z "$dip" ]]; then
-        echo -e "${YELLOW}Домен $d пока не находится в DNS. Проверьте запись A (она должна указывать на ${ip:-IP сервера}).${NC}"
+        echo -e "${YELLOW}Домен $d не находится в DNS: запись A должна указывать на ${ip:-IP сервера}.${NC}"
     elif [[ -n "$ip" && "$dip" != "$ip" ]]; then
-        echo -e "${YELLOW}Домен $d указывает на $dip, а IP этого сервера $ip. Если это не прокси, поправьте запись A.${NC}"
+        echo -e "${YELLOW}Домен $d указывает на $dip, а IP сервера $ip (если это не прокси, поправьте запись A).${NC}"
     fi
     if [[ -s "$CERT_ROOT/$d/fullchain.pem" && -s "$CERT_ROOT/$d/private.key" ]]; then
         if command -v openssl >/dev/null && openssl x509 -in "$CERT_ROOT/$d/fullchain.pem" -noout -checkhost "$d" 2>/dev/null | grep -qi "does NOT match"; then
@@ -850,37 +844,40 @@ api_choose_mode() {  # спрашивает домен и решает, буде
         return $?
     fi
     echo -e "${YELLOW}Сертификата для $d нет. Выпустите его: sudo bash ssl.sh -> пункт 1, потом вернитесь сюда.${NC}"
-    ask_yn "Продолжить без HTTPS сейчас? (HTTPS можно включить позже пунктом 5 этого раздела)" n || return 1
+    ask_yn "Продолжить без HTTPS сейчас? (HTTPS можно включить позже пунктом 6 этого раздела)" n || return 1
     return 0
 }
 
 api_show() {
     if ! api_installed; then echo -e "${RED}API-сервер не установлен (пункт 1 этого раздела).${NC}"; return 1; fi
-    local url d
-    url=$(api_url); d=$(kv_get "$API_CONF" API_DOMAIN)
+    local url; url=$(api_url)
     echo -e "\n${CYAN}=================================================${NC}"
     echo -e "${GREEN} API-СЕРВЕР: ВХОД И АДРЕСНАЯ КНИГА${NC}"
     echo -e "${CYAN}=================================================${NC}"
     echo -e "Сервер API для настроек RustDesk : ${YELLOW}${url}${NC}"
-    echo -e "Админка                          : ${YELLOW}${url}/_admin/${NC}  (логин admin; пароль вы задали при установке, забыли: пункт 4)"
+    echo -e "Админка                          : ${YELLOW}${url}/_admin/${NC}"
+    echo -e "Логин                            : ${YELLOW}$(api_user)${NC} (пароль вы задали при установке, забыли: пункт 5)"
     echo -e "${CYAN}=================================================${NC}"
-    echo "1) Пользователь. В админке создайте обычного пользователя (раздел пользователей). Под admin в клиентах лучше не входить."
+}
+
+api_help() {  # подсказки: клиент и вход через Google
+    api_installed || { echo -e "${RED}API-сервер не установлен (пункт 1 этого раздела).${NC}"; return 1; }
+    local url; url=$(api_url)
     local pnote="вместе с портом :$(api_port) (без порта клиент идёт на 443 и получает отказ)"
     api_tls_on && [[ "$(api_port)" == "443" ]] && pnote="порт не нужен (443 - стандартный HTTPS)"
-    echo "2) Клиент. Приложение RustDesk -> Настройки -> Сеть -> «Разблокировать» -> «Сервер API»: впишите адрес выше целиком, $pnote -> «Применить»."
-    echo "   Затем откройте вкладку адресной книги / кнопку «Войти» и войдите созданным пользователем."
-    echo "   После входа адреса ID-сервера, ретранслятора и ключ клиент получит сам."
+    echo -e "\n${YELLOW}=== Подключение клиентов и вход через Google ===${NC}"
+    echo "1) Клиент. Приложение RustDesk -> Настройки -> Сеть -> «Разблокировать» -> «Сервер API»: впишите $url, $pnote -> «Применить»."
+    echo "   Затем кнопка «Войти»: логин и пароль из установки. Адреса ID-сервера, ретранслятора и ключ клиент получит сам."
+    echo "2) Другие пользователи: в админке (${url}/_admin/) раздел «Пользователи» -> «Добавить»; пароль задаётся там же («Сбросить пароль»)."
     if api_tls_on; then
         echo "3) Кнопка Google (по желанию):"
-        echo "   a) console.cloud.google.com -> создайте проект -> «API и сервисы» -> «Экран согласия OAuth» -> тип External, имя и почта."
-        echo "      Пока приложение в режиме тестирования, добавьте свою почту в «Тестовые пользователи»."
-        echo "   b) «Учётные данные» -> «Создать учётные данные» -> «Идентификатор клиента OAuth» -> тип «Веб-приложение»."
-        echo "      В «Разрешённые URI перенаправления» впишите: ${url}/api/oidc/callback"
-        echo "   c) Скопируйте Client ID и Client Secret. В админке откройте раздел OAuth (название в меню может чуть отличаться),"
-        echo "      добавьте провайдера Google, вставьте Client ID и Client Secret, сохраните."
+        echo "   a) console.cloud.google.com -> создайте проект -> «API и сервисы» -> «Экран согласия OAuth» -> тип External, имя и почта;"
+        echo "      пока приложение в режиме тестирования, добавьте свою почту в «Тестовые пользователи»."
+        echo "   b) «Учётные данные» -> «Создать» -> «Идентификатор клиента OAuth» -> «Веб-приложение»; в «Разрешённые URI перенаправления»: ${url}/api/oidc/callback"
+        echo "   c) Скопируйте Client ID и Client Secret. В админке раздел OAuth (название может чуть отличаться): добавьте провайдера Google, вставьте их, сохраните."
         echo "   d) В клиенте на экране входа появится кнопка Google. Первый вход проверьте сами: сопоставление с пользователем зависит от версии программы."
     else
-        echo -e "${YELLOW}HTTPS выключен: пароль идёт по сети открытым текстом, кнопка Google недоступна. Включить: пункт 5 этого раздела.${NC}"
+        echo -e "${YELLOW}HTTPS выключен: пароль идёт по сети открытым текстом, кнопка Google недоступна. Включить: пункт 6 этого раздела.${NC}"
     fi
     echo "Язык админки выбирается в самой панели: значок переводчика справа вверху (русский есть)."
 }
@@ -891,13 +888,13 @@ api_install() {
     if [[ ! -s "$DATA_DIR/id_ed25519.pub" ]]; then
         echo -e "${RED}Сначала установите сам сервер RustDesk (пункт 1 главного меню).${NC}"; return 1
     fi
-    echo "Это сторонняя программа lejianwen/rustdesk-api (не от RustDesk). Она хранит логины и список устройств, обновляйте её вовремя."
+    echo "Сторонняя программа lejianwen/rustdesk-api (не от RustDesk) хранит логины и устройства, обновляйте её вовремя."
     if api_installed; then
         ask_yn "Уже установлено (версия $(kv_get "$API_CONF" API_VERSION)). Переустановить? Пользователи и адресные книги сохранятся" n || { echo "Отменено."; return 0; }
     fi
     api_choose_mode || { echo "Отменено."; return 0; }
     echo
-    api_read_password || { echo "Отменено."; return 0; }
+    api_read_account || { echo "Отменено."; return 0; }
     ensure_deps || return 1
     local tag tmp
     echo "Узнаю последнюю версию..."
@@ -924,18 +921,18 @@ api_install() {
     kv_set "$API_CONF" API_VERSION "$tag"
     echo "Настраиваю и запускаю..."
     if ! api_apply "$oldport"; then
-        echo -e "${RED}Программа не ответила за 30 секунд. Смотрите журнал: пункт 3 этого раздела.${NC}"
+        echo -e "${RED}Программа не ответила за 30 секунд. Смотрите журнал: пункт 4 этого раздела.${NC}"
         return 1
     fi
-    local pwok=0
-    api_set_password "$API_PW_NEW" && pwok=1
+    local acct="$API_USER_NEW"
+    if ! api_setup_account "$API_USER_NEW" "$API_PW_NEW"; then
+        echo -e "${YELLOW}Не удалось создать аккаунт $acct. Пока вход: admin с этим же паролем; переименовать можно в админке (Пользователи).${NC}"
+        acct=admin
+    fi
+    kv_set "$API_CONF" API_USER "$acct"; kv_set "$API_CONF" API_UID "$API_UID"
     echo -e "${GREEN}✅ Установка завершена. Версия: $tag${NC}"
     api_show
-    if (( pwok )); then
-        echo -e "\n${GREEN}Админка: логин admin, пароль${NC} ${YELLOW}${API_PW_NEW}${NC} (запишите его)."
-    else
-        echo -e "\n${YELLOW}Не удалось задать пароль администратора. Первый пароль есть в журнале (journalctl -u ${SVC_A} | head -n 40), или задайте свой: пункт 4.${NC}"
-    fi
+    echo -e "Логин: ${YELLOW}${acct}${NC}   Пароль: ${YELLOW}${API_PW_NEW}${NC}   (запишите)"
 }
 
 api_status() {
@@ -945,14 +942,7 @@ api_status() {
     svc_line "$SVC_A"; api_tls_on && svc_line "$SVC_AT"
     if api_up; then echo "Программа отвечает: да"; else echo -e "${RED}Программа отвечает: нет${NC}"; fi
     if api_tls_on; then
-        local d end
-        d=$(kv_get "$API_CONF" API_DOMAIN)
-        if command -v openssl >/dev/null && [[ -s "$CERT_ROOT/$d/fullchain.pem" ]]; then
-            end=$(openssl x509 -in "$CERT_ROOT/$d/fullchain.pem" -noout -enddate 2>/dev/null | sed 's/notAfter=//')
-            echo "HTTPS: включён, сертификат действует до: ${end:-?}"
-        else
-            echo -e "${RED}HTTPS: включён, но файл сертификата не найден в ${CERT_ROOT}/${d}/${NC}"
-        fi
+        echo "HTTPS: включён, сертификат действует до: $(openssl x509 -in "$CERT_ROOT/$(kv_get "$API_CONF" API_DOMAIN)/fullchain.pem" -noout -enddate 2>/dev/null | sed 's/notAfter=//')"
     else
         echo "HTTPS: выключен"
     fi
@@ -962,13 +952,12 @@ api_status() {
 
 api_password_change() {
     api_installed || { echo -e "${RED}Сначала установите (пункт 1 этого раздела).${NC}"; return 1; }
-    echo -e "\n${YELLOW}=== Сменить пароль администратора ===${NC}"
+    echo -e "\n${YELLOW}=== Сменить пароль для входа: $(api_user) ===${NC}"
     api_read_password || { echo "Отменено."; return 0; }
-    if api_set_password "$API_PW_NEW"; then
-        echo -e "${GREEN}✅ Пароль admin (только для входа в админку) изменён:${NC} ${YELLOW}${API_PW_NEW}${NC}"
-        echo "Пароль пользователя для клиентов меняется в админке: Пользователи -> «Сбросить пароль»."
+    if api_set_password "$(kv_get "$API_CONF" API_UID)" "$API_PW_NEW"; then
+        echo -e "${GREEN}✅ Пароль изменён:${NC} ${YELLOW}${API_PW_NEW}${NC} (один и для админки, и для приложения RustDesk)"
     else
-        echo -e "${RED}Не удалось сменить пароль. Смотрите журнал: пункт 3 этого раздела.${NC}"
+        echo -e "${RED}Не удалось сменить пароль. Смотрите журнал: пункт 4 этого раздела.${NC}"
     fi
 }
 
@@ -985,7 +974,7 @@ api_enable_https() {
         echo -e "${GREEN}✅ Готово.${NC} Не забудьте поменять «Сервер API» в клиентах на новый адрес."
         api_show
     else
-        echo -e "${RED}Программа не ответила за 30 секунд. Смотрите журнал: пункт 3 этого раздела.${NC}"
+        echo -e "${RED}Программа не ответила за 30 секунд. Смотрите журнал: пункт 4 этого раздела.${NC}"
     fi
 }
 
@@ -1026,7 +1015,7 @@ api_update() {
     if [[ -d "$API_DIR.bak/resources" ]]; then rm -rf "$API_DIR/resources"; cp -a "$API_DIR.bak/resources" "$API_DIR/resources"; fi
     chown -R rustdesk-api:rustdesk-api "$API_DIR"; chown root:root "$API_DIR/apimain"
     systemctl start "$SVC_A"
-    if api_wait_up; then echo "Откат выполнен, работает версия ${cur:-прежняя}."; else echo -e "${RED}После отката программа не отвечает, смотрите журнал: пункт 3.${NC}"; fi
+    if api_wait_up; then echo "Откат выполнен, работает версия ${cur:-прежняя}."; else echo -e "${RED}После отката программа не отвечает, смотрите журнал: пункт 4.${NC}"; fi
     return 1
 }
 
@@ -1039,14 +1028,11 @@ api_remove() {
         echo "База с пользователями и адресными книгами лежит в $API_DIR/data."
         ask_yn "Удалить и базу? Восстановить её будет нельзя" n && drop=1
     fi
-    systemctl disable --now "$SVC_A" "$SVC_AT" "$SVC_ATR.timer" >/dev/null 2>&1
-    rm -f "$UNIT_DIR/$SVC_A.service" "$UNIT_DIR/$SVC_AT.service" "$UNIT_DIR/$SVC_ATR.service" "$UNIT_DIR/$SVC_ATR.timer"
+    systemctl disable --now "$SVC_A" "$SVC_AT" >/dev/null 2>&1
+    rm -f "$UNIT_DIR/$SVC_A.service" "$UNIT_DIR/$SVC_AT.service"
     systemctl daemon-reload
     fw_rule close tcp "$(api_port)"
     rm -rf "$API_NGINX_DIR" "$API_ENV" "$API_DIR.bak"
-    if [[ "$(kv_get "$API_CONF" NGINX_ADDED)" == "1" && ! -e /etc/jackett-cert/nginx.conf ]]; then
-        apt-get remove -y nginx >/dev/null 2>&1
-    fi
     if (( drop )); then
         rm -rf "$API_DIR" "$API_CONF"
         id rustdesk-api >/dev/null 2>&1 && userdel rustdesk-api >/dev/null 2>&1
@@ -1065,28 +1051,30 @@ api_menu() {
             if systemctl is-active --quiet "$SVC_A"; then
                 echo -e "Состояние: ${GREEN}установлено, версия $(kv_get "$API_CONF" API_VERSION), работает${NC}; адрес: $(api_url)"
             else
-                echo -e "Состояние: ${RED}установлено, но не работает${NC} (пункт 3)"
+                echo -e "Состояние: ${RED}установлено, но не работает${NC} (пункт 4)"
             fi
         else
             echo -e "Состояние: ${YELLOW}не установлено${NC}"
         fi
-        echo "1. Установить / переустановить"
-        echo "2. Данные для входа и как включить Google"
-        echo "3. Статус и журнал"
-        echo "4. Сменить пароль администратора"
-        echo "5. Подключить HTTPS / сменить домен"
-        echo "6. Обновить сейчас"
-        echo "7. Удалить"
+        echo "1. Установить / переустановить (имя пользователя и пароль)"
+        echo "2. Данные для входа (адрес API, админка, логин)"
+        echo "3. Подключение клиентов и вход через Google (подсказки)"
+        echo "4. Статус и журнал"
+        echo "5. Сменить пароль"
+        echo "6. Подключить HTTPS / сменить домен"
+        echo "7. Обновить сейчас"
+        echo "8. Удалить"
         echo "0. Назад"
         read -rp "Пункт: " c || return 0
         case "$c" in
             1) api_install ;;
             2) api_show ;;
-            3) api_status ;;
-            4) api_password_change ;;
-            5) api_enable_https ;;
-            6) api_update ;;
-            7) api_remove ;;
+            3) api_help ;;
+            4) api_status ;;
+            5) api_password_change ;;
+            6) api_enable_https ;;
+            7) api_update ;;
+            8) api_remove ;;
             0) return 0 ;;
             *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
         esac
@@ -1118,7 +1106,7 @@ state_line() {
         if systemctl is-active --quiet "$SVC_A"; then
             echo -e "API-сервер (адресная книга): ${GREEN}работает${NC}, $(api_url)"
         else
-            echo -e "API-сервер (адресная книга): ${RED}не работает${NC} (пункт 9 -> 3)"
+            echo -e "API-сервер (адресная книга): ${RED}не работает${NC} (пункт 9 -> 4)"
         fi
     fi
 }
