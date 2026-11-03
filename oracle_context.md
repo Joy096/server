@@ -95,9 +95,9 @@ Oracle может забрать Always Free сервер, если 7 дней �
 
 ---
 
-## 8. Правило для всех скриптов: общий пакет nginx (решение Vitalii 03.11.2026)
+## 8. Правило для всех скриптов: общие пакеты nginx и Docker (решение Vitalii 03.11.2026)
 
-Если скрипт при удалении (целиком или по компонентам) собирается убрать пакет `nginx` (или другой общий пакет, который может использовать не только он), он обязан:
+Если скрипт при удалении (целиком или по компонентам) собирается убрать пакет `nginx` или `docker.io` (или другой общий пакет, который может использовать не только он), он обязан:
 1. проверить, не использует ли пакет другая программа на сервере;
 2. если используют: показать список (что именно), предупредить, что те программы перестанут работать, и спросить отдельное подтверждение `[y/N, Enter = N (нет, оставить)]`; без терминала ответ «нет»;
 3. если пакет в итоге остаётся, остальное удалять как обычно.
@@ -128,4 +128,30 @@ purge_nginx_checked() {  # 0 = удалён, 1 = оставлен
     apt-get purge -y 'nginx*' >/dev/null 2>&1
 }
 ```
-Тот же подход для других общих пакетов (`docker.io`, `git`, `curl`, `ufw` и т.п.): перед `purge` показывать, что ещё их использует (для apt: список из `apt-get -s purge …`, как в `jackett.sh`), и спрашивать.
+### Docker (то же правило, `docker_other_users` + `confirm_docker_purge`, сейчас в `jackett.sh`)
+Кто в проекте использует Docker: `jackett.sh` (ставит и удаляет `docker.io`, контейнер `flaresolverr` или `byparr`), `outline_vpn.sh` (ставит Docker через get.docker.com, контейнеры `shadowbox` и `watchtower`, пакет не удаляет), `rustdesk.sh` (только переносит ключ из старого Docker-варианта, пакет не трогает). Скрипт, который удаляет пакет Docker, должен сначала показать всё чужое: другие контейнеры (кроме своих, которые он сам создал), образы без контейнера, тома, службы systemd с `docker.service` в зависимостях, пакеты с зависимостью от docker.io (`apt-cache rdepends --installed --no-recommends --no-suggests docker.io`), а при остановленной службе Docker ещё `/var/lib/docker/containers` и папки известных программ (`/opt/outline`, `/opt/rustdesk-server`). Дальше то же: предупреждение, вопрос `[y/N, Enter = N (нет, оставить)]`, при отказе остальное удалять как обычно. **Новая программа на Docker должна добавить сюда и в функцию `docker_other_users` свою папку/признак.**
+
+Образец (bash):
+```
+docker_other_users() {   # «  • …» на каждого чужого пользователя Docker; пусто = никого. $OURS = имя своего контейнера или пусто
+    local found=0 line pkgs
+    if command -v docker &>/dev/null && timeout 15 docker info &>/dev/null; then
+        while IFS= read -r line; do [[ -n "$line" ]] && { echo "  • контейнер: $line"; found=1; }
+        done < <(docker ps -a --format '{{.Names}}|{{.Image}} ({{.Status}})' | awk -F'|' -v o="$OURS" '$1!=o {print $1" - образ "$2}')
+        line=$(docker volume ls -q | wc -l); (( line > 0 )) && { echo "  • тома Docker: $line шт."; found=1; }
+    elif [[ -n "$(ls -A /var/lib/docker/containers 2>/dev/null)" ]]; then
+        echo "  • в /var/lib/docker есть контейнеры (служба Docker остановлена)"; found=1
+    fi
+    pkgs=$(apt-cache rdepends --installed --no-recommends --no-suggests docker.io 2>/dev/null | awk '/^  /{gsub(/[| ]/,""); print}' | grep -vx 'docker.io' | sort -u | tr '\n' ' ')
+    [[ -n "${pkgs// /}" ]] && echo "  • пакеты, которым нужен Docker: ${pkgs}"
+}
+confirm_docker_purge() {  # 0 = можно удалять, 1 = оставить
+    local others a; others=$(docker_other_users); [[ -z "$others" ]] && return 0
+    echo "⚠️ Docker нужен и другим программам:"; echo "$others"
+    read -rp "Всё равно удалить пакет docker.io? [y/N, Enter = N (нет, оставить)]: " a
+    [[ "$a" == y || "$a" == Y ]] || { echo "Пакет docker.io оставлен."; return 1; }
+}
+```
+(полная версия с образами без контейнера и службами systemd: `docker_other_users` в `jackett.sh`.)
+
+Тот же подход для остальных общих пакетов (`git`, `curl`, `ufw` и т.п.): перед `purge` показывать, что ещё их использует (для apt: список из `apt-get -s purge …`, как в `jackett.sh`), и спрашивать.

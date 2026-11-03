@@ -795,6 +795,62 @@ purge_nginx_checked() {
     return 0
 }
 
+# Какие программы на сервере используют Docker, кроме нашего контейнера обхода Cloudflare (если его создал этот скрипт).
+# Печатает по строке «  • что именно» на каждую найденную программу; если таких нет, не печатает ничего.
+docker_other_users() {
+    local found=0 line unit u pkgs ours="" ours_img="" all_imgs used_imgs
+    [[ -n "$FS_CONTAINER" ]] && { ours="$FS_NAME"; ours_img="$FS_IMAGE"; }
+    if command -v docker &>/dev/null; then
+        if timeout 15 docker info &>/dev/null; then
+            while IFS= read -r line; do
+                [[ -n "$line" ]] && { echo "  • контейнер: ${line}"; found=1; }
+            done < <(docker ps -a --format '{{.Names}}|{{.Image}} ({{.Status}})' 2>/dev/null | awk -F'|' -v o="$ours" '$1!=o {print $1" - образ "$2}')
+            # Образы, которыми не пользуется ни один контейнер (кроме нашего образа), тоже чьи-то
+            used_imgs=$(docker ps -a --format '{{.Image}}' 2>/dev/null)
+            while IFS= read -r line; do
+                [[ -z "$line" || "$line" == "<none>:<none>" || "$line" == "$ours_img" ]] && continue
+                grep -qxF "$line" <<< "$used_imgs" && continue
+                echo "  • образ Docker без контейнера: ${line}"; found=1
+            done < <(docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | head -n 10)
+            line=$(docker volume ls -q 2>/dev/null | wc -l)
+            (( line > 0 )) && { echo "  • тома Docker: ${line} шт. (docker volume ls)"; found=1; }
+        elif [[ -n "$(ls -A /var/lib/docker/containers 2>/dev/null)" ]]; then
+            echo "  • в /var/lib/docker есть контейнеры (служба Docker остановлена, подробности недоступны)"; found=1
+        fi
+    fi
+    if (( ! found )); then
+        [[ -d /opt/outline ]] && { echo "  • Outline VPN (папка /opt/outline)"; found=1; }
+        [[ -d /opt/rustdesk-server ]] && { echo "  • старая установка RustDesk через Docker (папка /opt/rustdesk-server)"; found=1; }
+    fi
+    for unit in /etc/systemd/system/*.service; do
+        [[ -f "$unit" ]] || continue
+        grep -qE '^(After|Requires|Wants|BindsTo)=.*docker\.service' "$unit" 2>/dev/null || continue
+        u=$(basename "$unit")
+        echo "  • служба systemd ${u} зависит от Docker"; found=1
+    done
+    pkgs=$(apt-cache rdepends --installed --no-recommends --no-suggests docker.io 2>/dev/null | awk '/^  /{gsub(/[| ]/,""); print}' | grep -vx 'docker.io' | sort -u | tr '\n' ' ')
+    if [[ -n "${pkgs// /}" ]]; then
+        echo "  • пакеты, которым нужен Docker: ${pkgs}"; found=1
+    fi
+}
+
+# Спрашивает про удаление пакета docker.io, если им пользуются другие программы: показывает какие, предупреждает и ждёт
+# подтверждения (Enter = нет). Возвращает 0, если пакет можно удалять, и 1, если его нужно оставить.
+confirm_docker_purge() {
+    local others a
+    others=$(docker_other_users)
+    [[ -z "$others" ]] && return 0
+    echo -e "${YELLOW}⚠️ Docker нужен и другим программам на этом сервере:${NC}"
+    echo "$others"
+    echo "   Если удалить пакет docker.io, эти программы перестанут работать (контейнеры и образы тоже могут пропасть)."
+    read -rp "Всё равно удалить пакет docker.io? [y/N, Enter = N (нет, оставить)]: " a
+    if [[ "$a" != "y" && "$a" != "Y" ]]; then
+        echo "   Пакет docker.io оставлен."
+        return 1
+    fi
+    return 0
+}
+
 # Убирает HTTPS-прокси Jackett (nginx), который поставил ssl.sh.
 # Если Jackett остаётся (keep_app=1), возвращает ему прежние настройки и правило UFW: обычный HTTP снова работает.
 remove_https_proxy() {
@@ -834,7 +890,7 @@ remove_https_proxy() {
 uninstall_jackett() {
     echo -e "\n${YELLOW}🗑️ [УДАЛЕНИЕ JACKETT]${NC}"
     local has_app=0 has_cfg=0 has_ufw=0 has_user=0 has_fs=0 has_swap=0 has_tls=0 pkgs=""
-    local pkg tls_others
+    local pkg tls_others docker_others
     installed && has_app=1
     [[ -n "$JK_USER" ]] && [[ -d "$(cfg_dir)" ]] && has_cfg=1
     [[ -n "$UFW_RULE" ]] && command -v ufw &>/dev/null && ufw show added 2>/dev/null | grep -qxF "ufw ${UFW_RULE}" && has_ufw=1
@@ -867,6 +923,14 @@ uninstall_jackett() {
     fi
     (( has_user )) && echo "  • пользователь ${JK_USER} (создан скриптом) вместе с домашней папкой"
     [[ -n "$pkgs" ]] && echo "  • пакеты, поставленные скриптом: ${pkgs}"
+    if [[ " $pkgs " == *" docker.io "* ]]; then
+        docker_others=$(docker_other_users)
+        if [[ -n "$docker_others" ]]; then
+            echo -e "    ${YELLOW}⚠️ Пакет docker.io (его поставил этот скрипт) нужен и другим программам:${NC}"
+            echo "$docker_others" | sed 's/^/  /'
+            echo "    Пакет будет удалён только после отдельного подтверждения."
+        fi
+    fi
     echo
     echo "1. Всё: вернуть систему к состоянию до установки"
     echo "2. Выбрать по компонентам"
@@ -964,11 +1028,17 @@ uninstall_jackett() {
     fi
     if (( d_pkg )); then
         echo "→ удаляю пакеты..."
-        # shellcheck disable=SC2086
-        apt-get purge -y $pkgs
-        echo -e "${YELLOW}autoremove может затронуть и пакеты, не связанные со скриптом. Список:${NC}"
-        apt-get -s autoremove --purge 2>/dev/null | grep '^Remove' | sed 's/^Remove /  - /' | head -n 30
-        yn "Выполнить autoremove?" && apt-get autoremove --purge -y
+        # docker.io удаляем только если он не нужен другим программам (или вы подтвердили)
+        if [[ " $pkgs " == *" docker.io "* ]] && ! confirm_docker_purge; then
+            pkgs=" $pkgs "; pkgs="${pkgs/ docker.io / }"; pkgs="${pkgs# }"; pkgs="${pkgs% }"
+        fi
+        if [[ -n "$pkgs" ]]; then
+            # shellcheck disable=SC2086
+            apt-get purge -y $pkgs
+            echo -e "${YELLOW}autoremove может затронуть и пакеты, не связанные со скриптом. Список:${NC}"
+            apt-get -s autoremove --purge 2>/dev/null | grep '^Remove' | sed 's/^Remove /  - /' | head -n 30
+            yn "Выполнить autoremove?" && apt-get autoremove --purge -y
+        fi
         local left=""
         for pkg in $PKGS_ADDED; do pkg_installed "$pkg" && left="${left:+$left }$pkg"; done
         PKGS_ADDED="$left"
