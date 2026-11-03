@@ -754,6 +754,47 @@ show_status() {
 
 # ---------------------------------------------------------------- УДАЛЕНИЕ
 
+# Какие программы на сервере используют nginx, кроме HTTPS-прокси Jackett (он удаляется сейчас).
+# Печатает по строке «  • что именно» на каждую найденную программу; если таких нет, не печатает ничего.
+nginx_other_users() {
+    local f n found=0 pkgs
+    if [[ -e /etc/nginx/sites-available/lampa || -e /etc/nginx/sites-enabled/lampa ]]; then
+        echo "  • Lampa (сайт /etc/nginx/sites-enabled/lampa)"; found=1
+    fi
+    for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [[ -e "$f" ]] || continue
+        n=$(basename "$f")
+        case "$n" in default|lampa) continue ;; esac
+        echo "  • другой сайт nginx: $f"; found=1
+    done
+    pkgs=$(apt-cache rdepends --installed nginx 2>/dev/null | awk '/^  /{gsub(/[| ]/,""); print}' | grep -Ev '^(lib)?nginx' | sort -u | tr '\n' ' ')
+    if [[ -n "${pkgs// /}" ]]; then
+        echo "  • пакеты, которым нужен nginx: ${pkgs}"; found=1
+    fi
+    if (( ! found )) && systemctl is-active --quiet nginx 2>/dev/null; then
+        echo "  • стандартная служба nginx запущена (возможно, её использует другая программа)"
+    fi
+}
+
+# Удаляет пакет nginx. Если им пользуются другие программы, показывает какие, предупреждает и спрашивает подтверждение
+# (Enter = нет). Возвращает 0, если пакет удалён, и 1, если оставлен.
+purge_nginx_checked() {
+    local others a
+    others=$(nginx_other_users)
+    if [[ -n "$others" ]]; then
+        echo -e "${YELLOW}⚠️ Пакет nginx нужен и другим программам на этом сервере:${NC}"
+        echo "$others"
+        echo "   Если удалить пакет, эти программы перестанут работать."
+        read -rp "Всё равно удалить пакет nginx? [y/N, Enter = N (нет, оставить)]: " a
+        if [[ "$a" != "y" && "$a" != "Y" ]]; then
+            echo "   Пакет nginx оставлен."
+            return 1
+        fi
+    fi
+    apt-get purge -y 'nginx*' >/dev/null 2>&1
+    return 0
+}
+
 # Убирает HTTPS-прокси Jackett (nginx), который поставил ssl.sh.
 # Если Jackett остаётся (keep_app=1), возвращает ему прежние настройки и правило UFW: обычный HTTP снова работает.
 remove_https_proxy() {
@@ -785,7 +826,7 @@ remove_https_proxy() {
     fi
 
     # Пакеты nginx и stunnel4 (его ставила прежняя версия ssl.sh) удаляем только если их поставил ssl.sh (он оставил отметку)
-    [[ -f "${TLS_DIR}/pkg_nginx_added" ]] && apt-get purge -y 'nginx*' >/dev/null 2>&1
+    [[ -f "${TLS_DIR}/pkg_nginx_added" ]] && purge_nginx_checked
     [[ -f "${TLS_DIR}/pkg_stunnel_added" ]] && apt-get purge -y stunnel4 >/dev/null 2>&1
     rm -rf "$TLS_DIR"
 }
@@ -793,7 +834,7 @@ remove_https_proxy() {
 uninstall_jackett() {
     echo -e "\n${YELLOW}🗑️ [УДАЛЕНИЕ JACKETT]${NC}"
     local has_app=0 has_cfg=0 has_ufw=0 has_user=0 has_fs=0 has_swap=0 has_tls=0 pkgs=""
-    local pkg
+    local pkg tls_others
     installed && has_app=1
     [[ -n "$JK_USER" ]] && [[ -d "$(cfg_dir)" ]] && has_cfg=1
     [[ -n "$UFW_RULE" ]] && command -v ufw &>/dev/null && ufw show added 2>/dev/null | grep -qxF "ufw ${UFW_RULE}" && has_ufw=1
@@ -816,6 +857,14 @@ uninstall_jackett() {
     (( has_ufw ))  && echo "  • правило UFW: ${UFW_RULE}"
     (( has_swap )) && echo "  • swap-файл ${SWAP_CREATED} (создан скриптом)"
     (( has_tls ))  && echo "  • HTTPS-прокси (nginx, служба jackett-tls, сертификат в ${TLS_DIR}; поставлен через ssl.sh)"
+    if (( has_tls )) && [[ -f "${TLS_DIR}/pkg_nginx_added" ]]; then
+        tls_others=$(nginx_other_users)
+        if [[ -n "$tls_others" ]]; then
+            echo -e "    ${YELLOW}⚠️ Пакет nginx (его поставил ssl.sh) нужен и другим программам:${NC}"
+            echo "$tls_others" | sed 's/^/  /'
+            echo "    Пакет будет удалён только после отдельного подтверждения."
+        fi
+    fi
     (( has_user )) && echo "  • пользователь ${JK_USER} (создан скриптом) вместе с домашней папкой"
     [[ -n "$pkgs" ]] && echo "  • пакеты, поставленные скриптом: ${pkgs}"
     echo

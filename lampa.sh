@@ -28,6 +28,69 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# --- Учёт того, что поставил скрипт (нужен для удаления по компонентам) ---
+STATE_FILE="/etc/lampa-setup.state"
+PKGS_ADDED=""   # пакеты, которых не было до установки Lampa (в том числе nginx)
+
+load_state() { [[ -f "$STATE_FILE" ]] && source "$STATE_FILE"; }
+save_state() {
+    echo "PKGS_ADDED=$(printf '%q' "$PKGS_ADDED")" > "$STATE_FILE"
+    chmod 600 "$STATE_FILE"
+}
+load_state
+
+pkg_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'; }
+
+# Вопрос с ответом y/N (Enter = нет)
+ask_no() {
+    local a
+    read -rp "$1 [y/N, Enter = N (нет)]: " a
+    [[ "$a" =~ ^[YyДд]$ ]]
+}
+
+# Порт, на котором Lampa слушает в nginx (пусто, если конфига нет)
+lampa_port() {
+    awk '$1=="listen" && $2 ~ /^[0-9]+;$/ {gsub(";","",$2); print $2; exit}' "$NGINX_CONF_FILE" 2>/dev/null
+}
+
+# Какие программы на сервере используют nginx, кроме Lampa (она удаляется сейчас).
+# Печатает по строке «  • что именно» на каждую найденную программу; если таких нет, не печатает ничего.
+nginx_other_users() {
+    local f n found=0 pkgs
+    if [[ -f /etc/systemd/system/jackett-tls.service || -f /etc/jackett-cert/nginx.conf ]]; then
+        echo "  • HTTPS для Jackett (служба jackett-tls, конфиг /etc/jackett-cert/nginx.conf)"; found=1
+    fi
+    for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [[ -e "$f" ]] || continue
+        n=$(basename "$f")
+        case "$n" in default|"$NGINX_CONF_NAME") continue ;; esac
+        echo "  • другой сайт nginx: $f"; found=1
+    done
+    pkgs=$(apt-cache rdepends --installed nginx 2>/dev/null | awk '/^  /{gsub(/[| ]/,""); print}' | grep -Ev '^(lib)?nginx' | sort -u | tr '\n' ' ')
+    if [[ -n "${pkgs// /}" ]]; then
+        echo "  • пакеты, которым нужен nginx: ${pkgs}"; found=1
+    fi
+}
+
+# Удаляет пакет nginx. Если им пользуются другие программы, показывает какие, предупреждает и спрашивает подтверждение
+# (Enter = нет). Возвращает 0, если пакет удалён, и 1, если оставлен.
+purge_nginx_checked() {
+    local others
+    others=$(nginx_other_users)
+    if [[ -n "$others" ]]; then
+        echo "⚠️ Пакет nginx нужен и другим программам на этом сервере:"
+        echo "$others"
+        echo "   Если удалить пакет, эти программы перестанут работать."
+        if ! ask_no "Всё равно удалить пакет nginx?"; then
+            echo "ℹ️ Пакет nginx оставлен."
+            return 1
+        fi
+    fi
+    systemctl stop nginx &> /dev/null
+    apt-get purge -y 'nginx*' > /dev/null 2>&1
+    return 0
+}
+
 # Проверка доступности порта
 is_port_available() {
     local port="$1"
@@ -106,7 +169,18 @@ install_lampa_simple() {
     export DEBIAN_FRONTEND=noninteractive # Как в примере, для неинтерактивной установки
     # Скрываем вывод apt update, но выводим apt install
     apt update > /dev/null
+    # Запоминаем пакеты, которых раньше не было: при удалении Lampa предложим убрать только их
+    local pkg newly=()
+    for pkg in git nginx curl wget ca-certificates; do
+        pkg_installed "$pkg" || newly+=("$pkg")
+    done
     apt install -y git nginx curl wget ca-certificates || { echo "❌ ОШИБКА: Не удалось установить пакеты."; return 1; }
+    for pkg in "${newly[@]}"; do
+        if pkg_installed "$pkg" && [[ " $PKGS_ADDED " != *" $pkg "* ]]; then
+            PKGS_ADDED="${PKGS_ADDED:+$PKGS_ADDED }$pkg"
+        fi
+    done
+    save_state
 
     # Клонирование репозитория с ГОТОВЫМИ файлами
     echo ""
@@ -207,19 +281,10 @@ EOF
     return 0
 }
 
-# Функция удаления Lampa
-uninstall_lampa_internal() {
-    local detected_port=""
-    if [[ ! -f "$NGINX_CONF_FILE" && ! -d "$INSTALL_DIR" && ! -d "$SOURCE_DIR" ]]; then
-        echo "ℹ️ Lampa не установлена."
-        return 0 # Успех, т.к. делать нечего
-    fi
+# --- Удаление по компонентам ---
 
-    if [[ -f "$NGINX_CONF_FILE" ]]; then
-        detected_port=$(grep -E '^\\s*listen\\s+[0-9]+;' "$NGINX_CONF_FILE"|head -n 1|sed -E 's/^\\s*listen\\s+([0-9]+);.*/\\1/')
-        [[ -n "$detected_port" ]]
-    fi
-
+# Задача автообновления в cron и её журнал
+rm_lampa_cron() {
     echo ""
     echo "Удаление задачи cron..."
     if crontab -l 2>/dev/null | grep -q "$CRON_MARKER"; then
@@ -227,45 +292,186 @@ uninstall_lampa_internal() {
     else
         echo "ℹ️ Cron не найден."
     fi
+    echo "Удаление ${LOG_FILE}...";
+    rm -f "$LOG_FILE"
+}
 
+# Сайт Lampa в nginx. Параметр "no_reload": не трогать работу nginx (пакет сейчас будет удалён).
+rm_lampa_site() {
     echo "Удаление Nginx конфига..."
     rm -f "$NGINX_SITES_ENABLED/$NGINX_CONF_NAME" "$NGINX_CONF_FILE"
+    [[ "$1" == "no_reload" ]] && return 0
+    command -v nginx &> /dev/null || return 0
     nginx -t || echo "ℹ️ Конфиг Nginx пуст/некорректен."
     systemctl reload nginx || echo "ℹ️ Nginx не активен/reload не удался."
     if ! systemctl is-active --quiet nginx; then
         if systemctl list-unit-files | grep -q 'nginx.service'; then
             echo "⚠️ Nginx не активен. Запуск...";
-            systemctl start nginx || echo "❌ Не удалось запустить Nginx.";
+            systemctl start nginx || echo "❌ Не удалось запустить Nginx."
         fi
     fi
+}
 
+# Файлы Lampa и клон репозитория
+rm_lampa_files() {
     echo ""
     echo "Удаление ${INSTALL_DIR}...";
     rm -rf "$INSTALL_DIR"
     echo "Удаление ${SOURCE_DIR}...";
     rm -rf "$SOURCE_DIR"
-    echo "Удаление ${LOG_FILE}...";
-    rm -f "$LOG_FILE"
+}
 
-    # Удаление правила UFW
-    if [[ -n "$detected_port" ]]; then
-        if command -v ufw &> /dev/null; then
-            if ufw status | grep -q "Status: active"; then
-                if ufw delete allow proto tcp to any port "${detected_port}" comment 'Lampa HTTP' &> /dev/null; then
-                    echo "✅ Правило UFW удалено."
-                else
-                    echo "ℹ️ Правило UFW для порта ${detected_port} (Lampa HTTP) не найдено."
-                fi
-            fi
+# Порты правил UFW с комментарием "Lampa HTTP" (по одному в строке)
+lampa_ufw_ports() {
+    command -v ufw &> /dev/null || return 0
+    ufw status 2>/dev/null | grep -q "Status: active" || return 0
+    ufw status 2>/dev/null | grep 'Lampa HTTP' | awk '{print $1}' | grep -Eo '^[0-9]+' | sort -u
+}
+
+# Правило UFW (если оно было создано этим скриптом: у него комментарий "Lampa HTTP")
+rm_lampa_ufw() {
+    local p
+    for p in $(lampa_ufw_ports); do
+        if ufw --force delete allow "${p}/tcp" &> /dev/null; then
+            echo "✅ Правило UFW для порта ${p} удалено."
+        else
+            echo "ℹ️ Правило UFW для порта ${p} (Lampa HTTP) не найдено."
         fi
-    fi
+    done
+}
 
+# Функция удаления Lampa без вопросов (нужна при переустановке): всё, кроме пакетов
+uninstall_lampa_internal() {
+    if [[ ! -f "$NGINX_CONF_FILE" && ! -d "$INSTALL_DIR" && ! -d "$SOURCE_DIR" ]]; then
+        echo "ℹ️ Lampa не установлена."
+        return 0 # Успех, т.к. делать нечего
+    fi
+    rm_lampa_cron
+    rm_lampa_site
+    rm_lampa_files
+    rm_lampa_ufw
     echo "✅ Удаление Lampa завершено!"
     return 0
 }
 
+# Удаление из меню: всё сразу или по компонентам
 uninstall_lampa() {
-    uninstall_lampa_internal
+    local has_site=0 has_files=0 has_cron=0 has_ufw=0 has_nginx=0 pkgs="" pkg ports port others sc
+    echo ""
+    echo "Удаление Lampa"
+    [[ -f "$NGINX_CONF_FILE" || -L "$NGINX_SITES_ENABLED/$NGINX_CONF_NAME" ]] && has_site=1
+    [[ -d "$INSTALL_DIR" || -d "$SOURCE_DIR" ]] && has_files=1
+    if crontab -l 2>/dev/null | grep -q "$CRON_MARKER" || [[ -f "$LOG_FILE" ]]; then has_cron=1; fi
+    ports=$(lampa_ufw_ports | tr '\n' ' '); ports="${ports% }"
+    [[ -n "$ports" ]] && has_ufw=1
+    for pkg in $PKGS_ADDED; do
+        pkg_installed "$pkg" || continue
+        if [[ "$pkg" == "nginx" ]]; then has_nginx=1; else pkgs="${pkgs:+$pkgs }$pkg"; fi
+    done
+
+    if (( has_site + has_files + has_cron + has_ufw + has_nginx == 0 )) && [[ -z "$pkgs" ]]; then
+        echo "ℹ️ Удалять нечего: Lampa не установлена."
+        rm -f "$STATE_FILE"
+        return 0
+    fi
+
+    port=$(lampa_port)
+    echo "Найдено:"
+    (( has_site ))  && echo "  • сайт Lampa в nginx: ${NGINX_CONF_FILE} (порт ${port:-не определён})"
+    (( has_files )) && echo "  • файлы Lampa: ${INSTALL_DIR} и клон репозитория ${SOURCE_DIR}"
+    (( has_cron ))  && echo "  • автообновление: задача cron (ежедневно в 3:00) и журнал ${LOG_FILE}"
+    (( has_ufw ))   && echo "  • правило UFW (Lampa HTTP): порт ${ports}"
+    (( has_nginx )) && echo "  • пакет nginx (поставлен скриптом при установке Lampa)"
+    [[ -n "$pkgs" ]] && echo "  • другие пакеты, поставленные скриптом: ${pkgs}"
+    if (( has_nginx )); then
+        others=$(nginx_other_users)
+        if [[ -n "$others" ]]; then
+            echo "    ⚠️ Пакет nginx нужен и другим программам на этом сервере:"
+            echo "$others" | sed 's/^/  /'
+            echo "    Пакет будет удалён только после отдельного подтверждения."
+        fi
+    fi
+    if [[ ! -f "$STATE_FILE" ]] && (( has_site + has_files > 0 )); then
+        echo "ℹ️ Lampa установлена прежней версией скрипта: пакеты, которые она поставила (nginx, git и др.), не отслеживались"
+        echo "   и в список не попали. Чтобы скрипт их учитывал, переустановите Lampa (пункт 1 меню)."
+    fi
+    echo ""
+    echo "1. Всё: вернуть систему к состоянию до установки"
+    echo "2. Выбрать по компонентам"
+    echo "0. Отмена"
+    read -rp "Выберите [0-2]: " sc
+
+    local d_site=0 d_files=0 d_cron=0 d_ufw=0 d_nginx=0 d_pkg=0
+    case "$sc" in
+        1) d_site=$has_site; d_files=$has_files; d_cron=$has_cron; d_ufw=$has_ufw; d_nginx=$has_nginx; [[ -n "$pkgs" ]] && d_pkg=1 ;;
+        2)
+            (( has_site ))  && ask_no "Удалить сайт Lampa из nginx?" && d_site=1
+            (( has_files )) && ask_no "Удалить файлы Lampa (${INSTALL_DIR} и ${SOURCE_DIR})?" && d_files=1
+            (( has_cron ))  && ask_no "Удалить автообновление (cron и журнал)?" && d_cron=1
+            (( has_ufw ))   && ask_no "Удалить правило UFW (порт ${ports})?" && d_ufw=1
+            (( has_nginx )) && ask_no "Удалить пакет nginx?" && d_nginx=1
+            [[ -n "$pkgs" ]] && ask_no "Удалить пакеты (${pkgs})?" && d_pkg=1
+            ;;
+        *) echo "Отменено."; return 0 ;;
+    esac
+
+    # Зависимости: сайт работает только на пакете nginx
+    local extra=()
+    if (( d_nginx && has_site && !d_site )); then d_site=1; extra+=("сайт Lampa в nginx (он работает только на пакете nginx)"); fi
+
+    if (( d_site + d_files + d_cron + d_ufw + d_nginx + d_pkg == 0 )); then echo "Ничего не выбрано."; return 0; fi
+
+    echo ""
+    echo "Будет удалено:"
+    (( d_site ))  && echo "  ✗ сайт Lampa в nginx"
+    (( d_files )) && echo "  ✗ файлы Lampa и клон репозитория"
+    (( d_cron ))  && echo "  ✗ автообновление (cron и журнал)"
+    (( d_ufw ))   && echo "  ✗ правило UFW (порт ${ports})"
+    (( d_nginx )) && echo "  ✗ пакет nginx (с проверкой, не нужен ли он другим программам)"
+    (( d_pkg ))   && echo "  ✗ пакеты: ${pkgs}"
+    if (( ${#extra[@]} )); then
+        echo "Дополнительно из-за зависимостей:"
+        printf '  + %s\n' "${extra[@]}"
+    fi
+    echo ""
+    ask_no "Подтвердите удаление" || { echo "Отменено."; return 0; }
+
+    (( d_cron ))  && rm_lampa_cron
+    (( d_site ))  && { if (( d_nginx )); then rm_lampa_site no_reload; else rm_lampa_site; fi; }
+    (( d_files )) && rm_lampa_files
+    (( d_ufw ))   && rm_lampa_ufw
+    if (( d_nginx )); then
+        echo ""
+        echo "Проверяем пакет nginx: не нужен ли он другим программам..."
+        if purge_nginx_checked; then
+            echo "✅ Пакет nginx удалён."
+        else
+            # Пакет оставлен, но сайт мы убирали без перезапуска nginx: применим изменения
+            command -v nginx &> /dev/null && systemctl reload nginx &> /dev/null
+        fi
+    fi
+    if (( d_pkg )); then
+        echo ""
+        echo "Удаление пакетов: ${pkgs}"
+        # shellcheck disable=SC2086
+        apt-get purge -y $pkgs
+        echo "autoremove может затронуть и пакеты, не связанные со скриптом. Список:"
+        apt-get -s autoremove --purge 2>/dev/null | grep '^Remove' | sed 's/^Remove /  - /' | head -n 30
+        ask_no "Выполнить autoremove?" && apt-get autoremove --purge -y
+    fi
+
+    # Оставляем в учёте только то, что ещё стоит
+    local left=""
+    for pkg in $PKGS_ADDED; do pkg_installed "$pkg" && left="${left:+$left }$pkg"; done
+    PKGS_ADDED="$left"
+    if [[ -z "$PKGS_ADDED" ]]; then rm -f "$STATE_FILE"; else save_state; fi
+
+    echo ""
+    echo "✅ Выбранное удалено."
+    if [[ -f "$NGINX_CONF_FILE" || -d "$INSTALL_DIR" || -d "$SOURCE_DIR" || -n "$PKGS_ADDED" ]]; then
+        echo "   Остальное можно удалить повторно через этот же пункт."
+    fi
+    return 0
 }
 
 # Функция показа адреса
@@ -296,7 +502,7 @@ show_address() {
     local detected_port=""
     echo ""
     if [[ -f "$NGINX_CONF_FILE" ]]; then
-        detected_port=$(grep -E '^\\s*listen\\s+[0-9]+;' "$NGINX_CONF_FILE"|head -n 1|sed -E 's/^\\s*listen\\s+([0-9]+);.*/\\1/')
+        detected_port=$(lampa_port)
         if [[ -n "$detected_port" ]]; then
             show_address_internal "$detected_port"
         else
@@ -322,7 +528,7 @@ while true; do
     echo ""
     echo " ======== Меню Lampa ======== "
     echo " 1. Установить / Переустановить Lampa"
-    echo " 2. Удалить Lampa"
+    echo " 2. Удалить Lampa (всё или по компонентам)"
     echo " 3. Показать адрес сервера Lampa"
     echo " 4. Torrserver (Установка/Управление)"
     echo " 0. Выход"

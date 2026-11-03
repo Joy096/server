@@ -924,6 +924,50 @@ remove_torrserver_https() {
     rm -rf "${ts_cert_dir}"
 }
 
+# Какие программы на сервере используют nginx, кроме той, что удаляется сейчас ($1: jackett-tls или lampa).
+# Печатает по строке «  • что именно» на каждую найденную программу; если таких нет, не печатает ничего.
+nginx_other_users() {
+    local skip="$1" f n found=0 pkgs
+    if [[ "${skip}" != "lampa" ]] && [[ -e /etc/nginx/sites-available/lampa || -e /etc/nginx/sites-enabled/lampa ]]; then
+        echo "  • Lampa (сайт /etc/nginx/sites-enabled/lampa)"; found=1
+    fi
+    if [[ "${skip}" != "jackett-tls" ]] && [[ -f /etc/systemd/system/jackett-tls.service || -f /etc/jackett-cert/nginx.conf ]]; then
+        echo "  • HTTPS для Jackett (служба jackett-tls, конфиг /etc/jackett-cert/nginx.conf)"; found=1
+    fi
+    for f in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
+        [[ -e "${f}" ]] || continue
+        n=$(basename "${f}")
+        case "${n}" in default|lampa) continue ;; esac
+        echo "  • другой сайт nginx: ${f}"; found=1
+    done
+    pkgs=$(apt-cache rdepends --installed nginx 2>/dev/null | awk '/^  /{gsub(/[| ]/,""); print}' | grep -Ev '^(lib)?nginx' | sort -u | tr '\n' ' ')
+    if [[ -n "${pkgs// /}" ]]; then
+        echo "  • пакеты, которым нужен nginx: ${pkgs}"; found=1
+    fi
+    if (( ! found )) && [[ "${skip}" != "lampa" ]] && systemctl is-active --quiet nginx 2>/dev/null; then
+        echo "  • стандартная служба nginx запущена (возможно, её использует другая программа)"
+    fi
+}
+
+# Удаляет пакет nginx. Если им пользуются другие программы, показывает какие, предупреждает и спрашивает подтверждение
+# (Enter = нет). Возвращает 0, если пакет удалён, и 1, если оставлен. $1: что удаляется сейчас (jackett-tls или lampa).
+purge_nginx_checked() {
+    local others a
+    others=$(nginx_other_users "$1")
+    if [[ -n "${others}" ]]; then
+        echo -e "${yellow}⚠️ Пакет nginx нужен и другим программам на этом сервере:${plain}"
+        echo "${others}"
+        echo "   Если удалить пакет, эти программы перестанут работать."
+        read -p "Всё равно удалить пакет nginx? [y/N, Enter = N (нет, оставить)]: " a
+        if [[ "${a}" != "y" && "${a}" != "Y" && "${a}" != "д" && "${a}" != "Д" ]]; then
+            LOGD "Пакет nginx оставлен."
+            return 1
+        fi
+    fi
+    DEBIAN_FRONTEND=noninteractive apt-get purge -y 'nginx*' >/dev/null 2>&1
+    return 0
+}
+
 # Выключает HTTPS-прокси Jackett (nginx), возвращает прежние настройки Jackett (обычный HTTP снаружи),
 # закрывает порт HTTPS в UFW (если его открыл ssl.sh), возвращает правило UFW для порта Jackett и удаляет копию сертификата
 remove_jackett_https() {
@@ -976,8 +1020,8 @@ remove_jackett_https() {
     fi
 
     if [[ -f "${cert_dir}/pkg_nginx_added" ]]; then
-        LOGD "Удаляем пакет nginx (его поставил ssl.sh)..."
-        DEBIAN_FRONTEND=noninteractive apt-get purge -y 'nginx*' >/dev/null 2>&1
+        LOGD "Проверяем пакет nginx (его поставил ssl.sh): не нужен ли он другим программам..."
+        purge_nginx_checked jackett-tls && LOGD "Пакет nginx удалён."
     fi
     if [[ -f "${cert_dir}/pkg_stunnel_added" ]]; then
         LOGD "Удаляем пакет stunnel4 (его поставила прежняя версия ssl.sh)..."
