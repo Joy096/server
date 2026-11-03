@@ -11,20 +11,23 @@ sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
 sudo chown -R root: /root/.ssh/
 
 # Обновление системы без подтверждений
+# sudo сбрасывает переменные окружения, поэтому передаём их через env прямо в команду
+# (NEEDRESTART_MODE=a: needrestart сам перезапускает службы, без синего окна с вопросом)
 export DEBIAN_FRONTEND=noninteractive
-sudo apt update
-sudo apt upgrade -y
-sudo apt autoremove -y
+APT_ENV=(env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a)
+sudo "${APT_ENV[@]}" apt update
+sudo "${APT_ENV[@]}" apt upgrade -y
+sudo "${APT_ENV[@]}" apt autoremove -y
 
 # Установка некоторых необходимых пакетов
-sudo apt install git -y
+sudo "${APT_ENV[@]}" apt install git -y
 
 # Остановка и отключение netfilter-persistent
 sudo systemctl stop netfilter-persistent
 sudo systemctl disable netfilter-persistent
 
 # Настройка брандмауэра 
-sudo apt install ufw -y
+sudo "${APT_ENV[@]}" apt install ufw -y
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 sudo ufw allow 22/tcp # Разрешить SSH
@@ -33,8 +36,9 @@ sudo ufw allow 443/tcp # Разрешить HTTPS
 sudo ufw --force enable
 
 # Настройка сети
-echo -e "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr" | sudo tee --append /etc/sysctl.conf
-sudo sysctl -p
+# Отдельный файл (перезаписывается при повторном запуске, без дублей в /etc/sysctl.conf)
+echo -e "net.core.default_qdisc=fq\nnet.ipv4.tcp_congestion_control=bbr" | sudo tee /etc/sysctl.d/99-bbr.conf
+sudo sysctl -p /etc/sysctl.d/99-bbr.conf
 
 # Настройка локали
 sudo locale-gen ru_UA.UTF-8
@@ -47,7 +51,7 @@ sudo timedatectl set-timezone Europe/Kyiv
 
 # Добавление задания в cron для пользователя root если его нет
 CRON_USER="root"
-CRON_JOB="0 4 * * * curl -Ls 'https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh' | bash > '/root/updater.log' 2>&1"
+CRON_JOB="0 4 * * * curl -fsSL 'https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh' | bash > '/root/updater.log' 2>&1"
 CRON_HEADER="# Edit this file to introduce tasks to be run by cron.
 # 
 # Each task to run has to be defined through a single line
@@ -92,12 +96,12 @@ if apt-cache show aptitude > /dev/null 2>&1; then
     :
 else
     yes | sudo add-apt-repository universe
-    sudo apt update
+    sudo "${APT_ENV[@]}" apt update
 fi
-    sudo apt install aptitude -y
+    sudo "${APT_ENV[@]}" apt install aptitude -y
 
-# Обновление пакетов с помощью aptitude 
-sudo aptitude upgrade -y
+# Обновление пакетов с помощью aptitude
+sudo "${APT_ENV[@]}" aptitude upgrade -y
 
 # Перезагрузкв
 sudo reboot
