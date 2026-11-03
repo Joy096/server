@@ -33,14 +33,6 @@
     ```bash
     wget -O ssl.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh && sudo bash ssl.sh
     ```
-*   **[`lego_cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lego_cert.sh):** Альтернатива `ssl.sh` только для AdGuard Home: сертификаты Let's Encrypt через LEGO и Cloudflare DNS, продление раз в месяц через cron.
-    ```bash
-    wget -O lego_cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lego_cert.sh && sudo bash lego_cert.sh
-    ```
-*   **[`update-nextcloud-cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/update-nextcloud-cert.sh):** Обновляет сертификат Nextcloud (Snap) через Let's Encrypt: временно переключает порты на 80/443 и возвращает прежние (нужен пакет `expect`). ⚠️ Домен и email прописаны прямо в скрипте: поправьте под себя перед запуском.
-    ```bash
-    wget -O update-nextcloud-cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/update-nextcloud-cert.sh && sudo bash update-nextcloud-cert.sh
-    ```
 
 #### 🌐 Сеть и доступ
 
@@ -137,7 +129,7 @@
 *   **Просмотр перед запуском:** Всегда просматривайте код скрипта перед его выполнением на сервере, особенно при запуске от имени `root`. Убедитесь, что вы понимаете, какие команды он будет выполнять.
 *   **Совместимость:** Скрипты в основном ориентированы на Debian/Ubuntu. Работа на других дистрибутивах не гарантируется. Некоторые скрипты используют Snap, а скрипты для Oracle Cloud рассчитаны на серверы Oracle.
 *   **Перезагрузка:** `server_new.sh` и `updater.sh` в конце перезагружают сервер.
-*   **Самоудаление:** Скрипты `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh`, `hysteria.sh` и `lego_cert.sh` удаляют себя после завершения. Это не проблема: команда из списка при необходимости скачает их заново.
+*   **Самоудаление:** Скрипты `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` и `hysteria.sh` удаляют себя после завершения. Это не проблема: команда из списка при необходимости скачает их заново.
 *   **Резервные копии:** Перед применением скриптов, особенно `server_new.sh`, рекомендуется сделать резервную копию важных данных или системы.
 *   **"Как есть":** Скрипты предоставляются "как есть", без гарантий. Используйте их на свой страх и риск.
 
@@ -173,14 +165,6 @@
 *   **[`ssl.sh`](https://github.com/Joy096/server/raw/refs/heads/main/ssl.sh):** Випуск та автооновлення SSL-сертифікатів Let's Encrypt через `acme.sh` (DNS: Cloudflare, DuckDNS, deSEC, Dynu). Сам встановлює сертифікат у 3X-UI, Nextcloud (Snap), AdGuard Home (Snap), qBittorrent, TorrServer та Jackett і показує, де HTTPS уже ввімкнено. Замінив попередній `cloudflare_ssl.sh`. Докладніше: [`ssl.md`](https://github.com/Joy096/server/blob/main/ssl.md).
     ```bash
     wget -O ssl.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh && sudo bash ssl.sh
-    ```
-*   **[`lego_cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lego_cert.sh):** Альтернатива `ssl.sh` лише для AdGuard Home: сертифікати Let's Encrypt через LEGO та Cloudflare DNS, продовження раз на місяць через cron.
-    ```bash
-    wget -O lego_cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lego_cert.sh && sudo bash lego_cert.sh
-    ```
-*   **[`update-nextcloud-cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/update-nextcloud-cert.sh):** Оновлює сертифікат Nextcloud (Snap) через Let's Encrypt: тимчасово перемикає порти на 80/443 і повертає попередні (потрібен пакет `expect`). ⚠️ Домен та email прописані прямо в скрипті: виправте під себе перед запуском.
-    ```bash
-    wget -O update-nextcloud-cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/update-nextcloud-cert.sh && sudo bash update-nextcloud-cert.sh
     ```
 
 #### 🌐 Мережа та доступ
@@ -278,7 +262,7 @@
 *   **Перегляд перед запуском:** Завжди переглядайте код скрипта перед його виконанням на сервері, особливо під час запуску від імені `root`. Переконайтеся, що ви розумієте, які команди він виконуватиме.
 *   **Сумісність:** Скрипти переважно орієнтовані на Debian/Ubuntu. Робота на інших дистрибутивах не гарантується. Деякі скрипти використовують Snap, а скрипти для Oracle Cloud розраховані на сервери Oracle.
 *   **Перезавантаження:** `server_new.sh` та `updater.sh` наприкінці перезавантажують сервер.
-*   **Самовидалення:** Скрипти `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh`, `hysteria.sh` та `lego_cert.sh` видаляють себе після завершення. Це не проблема: команда зі списку за потреби завантажить їх знову.
+*   **Самовидалення:** Скрипти `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` та `hysteria.sh` видаляють себе після завершення. Це не проблема: команда зі списку за потреби завантажить їх знову.
 *   **Резервні копії:** Перед застосуванням скриптів, особливо `server_new.sh`, рекомендується зробити резервну копію важливих даних або системи.
 *   **"Як є":** Скрипти надаються "як є", без гарантій. Використовуйте їх на свій ризик.
 
@@ -314,14 +298,6 @@ Every script below comes with a ready-made command: it downloads the file (repla
 *   **[`ssl.sh`](https://github.com/Joy096/server/raw/refs/heads/main/ssl.sh):** Issues and auto-renews Let's Encrypt SSL certificates via `acme.sh` (DNS: Cloudflare, DuckDNS, deSEC, Dynu). Installs the certificate into 3X-UI, Nextcloud (Snap), AdGuard Home (Snap), qBittorrent, TorrServer and Jackett by itself and shows where HTTPS is already enabled. Replaces the former `cloudflare_ssl.sh`. Details: [`ssl.md`](https://github.com/Joy096/server/blob/main/ssl.md).
     ```bash
     wget -O ssl.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh && sudo bash ssl.sh
-    ```
-*   **[`lego_cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lego_cert.sh):** An alternative to `ssl.sh` for AdGuard Home only: Let's Encrypt certificates via LEGO and Cloudflare DNS, renewed monthly via cron.
-    ```bash
-    wget -O lego_cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lego_cert.sh && sudo bash lego_cert.sh
-    ```
-*   **[`update-nextcloud-cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/update-nextcloud-cert.sh):** Renews the Nextcloud (Snap) certificate via Let's Encrypt: temporarily switches the ports to 80/443 and restores the previous ones (needs the `expect` package). ⚠️ The domain and email are hard-coded in the script: edit them before running.
-    ```bash
-    wget -O update-nextcloud-cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/update-nextcloud-cert.sh && sudo bash update-nextcloud-cert.sh
     ```
 
 #### 🌐 Networking and access
@@ -419,7 +395,7 @@ Every script below comes with a ready-made command: it downloads the file (repla
 *   **Review Before Running:** Always review the script's code before executing it on your server, especially when running as `root`. Ensure you understand the commands it will run.
 *   **Compatibility:** Scripts are primarily targeted at Debian/Ubuntu. Functionality on other distributions is not guaranteed. Some scripts use Snap, and the Oracle Cloud scripts are meant for Oracle servers.
 *   **Reboot:** `server_new.sh` and `updater.sh` reboot the server at the end.
-*   **Self-Deletion:** The scripts `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh`, `hysteria.sh` and `lego_cert.sh` delete themselves upon completion. That is fine: the command from the list downloads them again when needed.
+*   **Self-Deletion:** The scripts `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` and `hysteria.sh` delete themselves upon completion. That is fine: the command from the list downloads them again when needed.
 *   **Backups:** Before applying scripts, especially `server_new.sh`, it is recommended to back up important data or the system.
 *   **"As Is":** The scripts are provided "as is" without warranty. Use them at your own risk.
 
@@ -455,14 +431,6 @@ Każdy skrypt poniżej ma gotowe polecenie: pobiera plik (zastępując starszą 
 *   **[`ssl.sh`](https://github.com/Joy096/server/raw/refs/heads/main/ssl.sh):** Wystawia i automatycznie odnawia certyfikaty SSL Let's Encrypt przez `acme.sh` (DNS: Cloudflare, DuckDNS, deSEC, Dynu). Sam instaluje certyfikat w 3X-UI, Nextcloud (Snap), AdGuard Home (Snap), qBittorrent, TorrServer i Jackett oraz pokazuje, gdzie HTTPS jest już włączony. Zastępuje dawny `cloudflare_ssl.sh`. Szczegóły: [`ssl.md`](https://github.com/Joy096/server/blob/main/ssl.md).
     ```bash
     wget -O ssl.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh && sudo bash ssl.sh
-    ```
-*   **[`lego_cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lego_cert.sh):** Alternatywa dla `ssl.sh` tylko dla AdGuard Home: certyfikaty Let's Encrypt przez LEGO i Cloudflare DNS, odnawiane raz w miesiącu przez cron.
-    ```bash
-    wget -O lego_cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lego_cert.sh && sudo bash lego_cert.sh
-    ```
-*   **[`update-nextcloud-cert.sh`](https://github.com/Joy096/server/raw/refs/heads/main/update-nextcloud-cert.sh):** Odnawia certyfikat Nextcloud (Snap) przez Let's Encrypt: tymczasowo przełącza porty na 80/443 i przywraca poprzednie (wymaga pakietu `expect`). ⚠️ Domena i e-mail są wpisane na stałe w skrypcie: popraw je przed uruchomieniem.
-    ```bash
-    wget -O update-nextcloud-cert.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/update-nextcloud-cert.sh && sudo bash update-nextcloud-cert.sh
     ```
 
 #### 🌐 Sieć i dostęp
@@ -560,6 +528,6 @@ Każdy skrypt poniżej ma gotowe polecenie: pobiera plik (zastępując starszą 
 *   **Przegląd przed uruchomieniem:** Zawsze przeglądaj kod skryptu przed jego wykonaniem na serwerze, zwłaszcza podczas uruchamiania jako `root`. Upewnij się, że rozumiesz, jakie polecenia zostaną wykonane.
 *   **Kompatybilność:** Skrypty są głównie przeznaczone dla systemów Debian/Ubuntu. Działanie na innych dystrybucjach nie jest gwarantowane. Niektóre skrypty używają Snap, a skrypty dla Oracle Cloud są przeznaczone dla serwerów Oracle.
 *   **Restart:** `server_new.sh` i `updater.sh` na końcu restartują serwer.
-*   **Samousunięcie:** Skrypty `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh`, `hysteria.sh` i `lego_cert.sh` usuwają się po zakończeniu. To nie problem: polecenie z listy w razie potrzeby pobierze je ponownie.
+*   **Samousunięcie:** Skrypty `server_new.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` i `hysteria.sh` usuwają się po zakończeniu. To nie problem: polecenie z listy w razie potrzeby pobierze je ponownie.
 *   **Kopie zapasowe:** Przed zastosowaniem skryptów, zwłaszcza `server_new.sh`, zaleca się wykonanie kopii zapasowej ważnych danych lub systemu.
 *   **"Tak jak jest":** Skrypty są dostarczane "tak jak są", bez żadnej gwarancji. Używaj ich na własne ryzyko.
