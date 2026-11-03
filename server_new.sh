@@ -38,7 +38,19 @@ sudo systemctl disable netfilter-persistent
 sudo "${APT_ENV[@]}" apt install ufw -y
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
-sudo ufw allow 22/tcp # Разрешить SSH
+# Разрешить SSH: определяем порты, чтобы не потерять доступ, если SSH сидит не на 22.
+# Собираем порты из трёх источников: текущее подключение, настройки sshd и то, что сервер реально слушает.
+SSH_PORTS=$(
+    {
+        echo "$SSH_CONNECTION" | awk '{print $4}'
+        sudo sshd -T 2>/dev/null | awk '$1=="port" {print $2}'
+        sudo ss -H -tlnp 2>/dev/null | awk '/"sshd"/ {n=split($4, a, ":"); print a[n]}'
+    } | grep -E '^[0-9]+$' | sort -un
+)
+[ -n "$SSH_PORTS" ] || SSH_PORTS=22
+for SSH_PORT in $SSH_PORTS; do
+    sudo ufw allow "${SSH_PORT}/tcp"
+done
 sudo ufw allow 80/tcp  # Разрешить HTTP
 sudo ufw allow 443/tcp # Разрешить HTTPS
 sudo ufw --force enable
