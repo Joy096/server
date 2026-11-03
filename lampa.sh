@@ -515,7 +515,8 @@ show_address() {
 
 # Функция запуска скрипта Torrserver
 run_torrserver_script() {
-    if wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/torrserver.sh; then
+    # -O: новый файл записывается поверх старого (без -O wget сохранил бы его как torrserver.sh.1, а запустился бы старый)
+    if wget -O torrserver.sh "$TORRSERVER_SCRIPT_URL"; then
         chmod +x torrserver.sh
         bash torrserver.sh
     else

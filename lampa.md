@@ -7,7 +7,7 @@
 - Настраивает **системный nginx**: сайт `/etc/nginx/sites-available/lampa` (ссылка в `sites-enabled`), порт спрашивается (по умолчанию 80, занятые порты не принимаются), заголовки CORS «*». Ссылку `sites-enabled/default` при установке удаляет.
 - Открывает порт в UFW (если UFW активен) с комментарием `Lampa HTTP`.
 - Ставит задачу cron «ежедневно в 3:00» (маркер `# LAMPACRON_GITHUB_AUTOUPDATE`): `curl ... lampa_update.sh | bash > /root/lampa_update.log`. `lampa_update.sh` лежит в репозитории рядом (обновляет `/opt/lampa` и копирует в `/var/www/lampa`).
-- Пункт 4 меню скачивает и запускает `torrserver.sh`.
+- Пункт 4 меню скачивает и запускает `torrserver.sh` (`wget -O torrserver.sh "$TORRSERVER_SCRIPT_URL"`: с 03.11.2026 новый файл записывается поверх старого; раньше без `-O` при существующем `torrserver.sh` в текущей папке `wget` сохранял новый как `torrserver.sh.1`, а запускался старый).
 
 ## Меню
 1. Установить / Переустановить Lampa. При переустановке вызывается `uninstall_lampa_internal` (всё, кроме пакетов, без вопросов).
