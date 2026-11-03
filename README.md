@@ -82,7 +82,7 @@
 
 #### ☁️ Oracle Cloud
 
-*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Автоматически создаёт бесплатный сервер Oracle Cloud (Ampere или Micro): ищет свободное место в фоне и пишет в Telegram, когда сервер создан. Также показывает ваши серверы, меняет ЦП, память и диск, удаляет серверы. Подробнее: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
+*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Ищет свободное место в фоне для создания сервера, оповещает в Telegram, когда сервер создан. Также показывает ваши серверы, меняет ЦП, память и диск, удаляет серверы. Подробнее: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
     ```bash
     wget -O oracle.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/oracle.sh && sudo bash oracle.sh
     ```
@@ -215,7 +215,7 @@
 
 #### ☁️ Oracle Cloud
 
-*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Автоматично створює безкоштовний сервер Oracle Cloud (Ampere або Micro): шукає вільне місце у фоні та пише в Telegram, коли сервер створено. Також показує ваші сервери, змінює ЦП, пам'ять і диск, видаляє сервери. Докладніше: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
+*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Шукає вільне місце у фоні для створення сервера, сповіщає в Telegram, коли сервер створено. Також показує ваші сервери, змінює ЦП, пам'ять і диск, видаляє сервери. Докладніше: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
     ```bash
     wget -O oracle.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/oracle.sh && sudo bash oracle.sh
     ```
@@ -348,7 +348,7 @@ Every script below comes with a ready-made command: it downloads the file (repla
 
 #### ☁️ Oracle Cloud
 
-*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Automatically creates a free Oracle Cloud server (Ampere or Micro): searches for free capacity in the background and messages you on Telegram once the server is created. Also lists your servers, changes CPU, memory and disk, and deletes servers. Details: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
+*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Searches for free capacity in the background to create a server, notifies you on Telegram once the server is created. Also lists your servers, changes CPU, memory and disk, and deletes servers. Details: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
     ```bash
     wget -O oracle.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/oracle.sh && sudo bash oracle.sh
     ```
@@ -481,7 +481,7 @@ Każdy skrypt poniżej ma gotowe polecenie: pobiera plik (zastępując starszą 
 
 #### ☁️ Oracle Cloud
 
-*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Automatycznie tworzy darmowy serwer Oracle Cloud (Ampere lub Micro): szuka wolnego miejsca w tle i pisze na Telegramie, gdy serwer zostanie utworzony. Pokazuje też Twoje serwery, zmienia CPU, pamięć i dysk oraz usuwa serwery. Szczegóły: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
+*   **[`oracle.sh`](https://github.com/Joy096/server/raw/refs/heads/main/oracle.sh):** Szuka wolnego miejsca w tle, aby utworzyć serwer, powiadamia na Telegramie, gdy serwer zostanie utworzony. Pokazuje też Twoje serwery, zmienia CPU, pamięć i dysk oraz usuwa serwery. Szczegóły: [`oracle.md`](https://github.com/Joy096/server/blob/main/oracle.md).
     ```bash
     wget -O oracle.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/oracle.sh && sudo bash oracle.sh
     ```
