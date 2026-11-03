@@ -6,9 +6,17 @@ SCRIPT_PATH=$(realpath "$0")
 # Удаляем скрипт после завершения
 trap 'rm -f "$SCRIPT_PATH"' EXIT
 
-# Настройка SSH-ключей
-sudo cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/
-sudo chown -R root: /root/.ssh/
+# Настройка SSH-ключей: копируем ключи того, кто запустил скрипт (в том числе через sudo), в root.
+# Если скрипт запущен от root или файла с ключами нет, этот шаг пропускается.
+KEY_USER="${SUDO_USER:-$(id -un)}"
+KEY_HOME=$(getent passwd "$KEY_USER" | cut -d: -f6)
+if [ "$KEY_USER" != "root" ] && [ -n "$KEY_HOME" ] && [ -f "$KEY_HOME/.ssh/authorized_keys" ]; then
+    sudo install -d -m 700 /root/.ssh
+    sudo cp "$KEY_HOME/.ssh/authorized_keys" /root/.ssh/
+    sudo chown -R root: /root/.ssh/
+else
+    echo "Копирование ключей SSH пропущено: скрипт запущен от root или нет ${KEY_HOME:-домашней папки}/.ssh/authorized_keys"
+fi
 
 # Обновление системы без подтверждений
 # sudo сбрасывает переменные окружения, поэтому передаём их через env прямо в команду
