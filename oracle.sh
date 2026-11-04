@@ -45,6 +45,10 @@ LOG="/var/log/oracle-arm.log"
 DONE_FILE="/var/lib/oracle-arm.done"
 SHAPE="VM.Standard.A1.Flex"
 
+# Лимит Always Free для всех Ampere вместе (Oracle урезал его с 4 ЦП / 24 ГБ до 2 ЦП / 12 ГБ с 15.06.2026)
+AMPERE_MAX_CPU=2
+AMPERE_MAX_MEM=12
+
 # --- Учёт того, что создал скрипт ---
 PKGS_ADDED=""        # пакеты, которых не было до установки
 OCI_INSTALLED=""     # 1, если утилиту oci поставил скрипт
@@ -551,7 +555,7 @@ setup_task() {
     local used u_cpu u_mem u_boot u_micro free_cpu free_mem free_boot free_micro
     used=$(used_resources "$comp" "$ads")
     read -r u_cpu u_mem u_boot u_micro <<< "$used"
-    free_cpu=$((4 - u_cpu)); free_mem=$((24 - u_mem)); free_boot=$((200 - u_boot)); free_micro=$((2 - u_micro))
+    free_cpu=$((AMPERE_MAX_CPU - u_cpu)); free_mem=$((AMPERE_MAX_MEM - u_mem)); free_boot=$((200 - u_boot)); free_micro=$((2 - u_micro))
     (( free_cpu < 0 )) && free_cpu=0; (( free_mem < 0 )) && free_mem=0; (( free_boot < 0 )) && free_boot=0; (( free_micro < 0 )) && free_micro=0
     echo "  Ampere уже занято: ${u_cpu} ЦП, ${u_mem} ГБ памяти (свободно ${free_cpu} ЦП, ${free_mem} ГБ). Micro уже создано: ${u_micro} из 2."
     if [[ "$mode" == "manual" && -f "$CONF_FILE" && ! -f "$DONE_FILE" ]] && systemctl is-active --quiet "$SVC"; then
@@ -569,7 +573,7 @@ setup_task() {
     fi
 
     local shape_rows
-    shape_rows="Ampere  VM.Standard.A1.Flex"$'\t'"Always Free: до 4 ЦП и 24 ГБ памяти на все Ampere вместе (ARM)"$'\t'"свободно: ${free_cpu} ЦП, ${free_mem} ГБ"$'\n'
+    shape_rows="Ampere  VM.Standard.A1.Flex"$'\t'"Always Free: до ${AMPERE_MAX_CPU} ЦП и ${AMPERE_MAX_MEM} ГБ памяти на все Ampere вместе (ARM)"$'\t'"свободно: ${free_cpu} ЦП, ${free_mem} ГБ"$'\n'
     shape_rows+="Micro  VM.Standard.E2.1.Micro"$'\t'"Always Free: 1 ЦП, 1 ГБ памяти (AMD), до 2 штук в аккаунте"$'\t'"свободно штук: ${free_micro}"
     pick_from "Конфигурация (🏷 Режим «Всегда бесплатно» применим)" 1 <<< "$shape_rows" || return 1
     if [[ "$PICKED_IDX" == "2" ]]; then SHAPE="VM.Standard.E2.1.Micro"; else SHAPE="VM.Standard.A1.Flex"; fi
@@ -1053,7 +1057,7 @@ print_limits() {
     used=$(used_resources "$SRV_COMP" "$SRV_ADS")
     read -r u_cpu u_mem u_boot u_micro <<< "$used"
     echo -e "\n${YELLOW}Лимит Always Free (занято из доступного):${NC}"
-    echo "  Ampere:  ${u_cpu} из 4 ЦП,  ${u_mem} из 24 ГБ памяти"
+    echo "  Ampere:  ${u_cpu} из ${AMPERE_MAX_CPU} ЦП,  ${u_mem} из ${AMPERE_MAX_MEM} ГБ памяти"
     echo "  Micro:   ${u_micro} из 2 серверов"
     echo "  Диски:   ${u_boot} из 200 ГБ (все загрузочные тома аккаунта)"
     LIM_BOOT="$u_boot"
@@ -1070,7 +1074,7 @@ edit_cpu_mem() {
         [[ "$j" == "$i" ]] && continue
         if [[ "${SRV_SHAPE[j]}" == "VM.Standard.A1.Flex" ]]; then oc=$((oc + ${SRV_CPU[j]%.*})); om=$((om + ${SRV_MEM[j]%.*})); fi
     done
-    maxc=$((4 - oc)); maxm=$((24 - om))
+    maxc=$((AMPERE_MAX_CPU - oc)); maxm=$((AMPERE_MAX_MEM - om))
     (( maxc < 1 || maxm < 1 )) && { echo -e "${RED}Остальные Ampere-серверы занимают весь лимит: увеличить нечего.${NC}"; return; }
     echo -e "\nСейчас: ${SRV_CPU[i]} ЦП, ${SRV_MEM[i]} ГБ. Доступно этому серверу в рамках Always Free: до ${maxc} ЦП и ${maxm} ГБ."
     ask_number "Новое количество ЦП (1-${maxc})" "${SRV_CPU[i]}" 1 "$maxc" || return; ncpu="$ANSWER"
