@@ -90,7 +90,7 @@ while true; do
     read -rp "Выберите пункт [0-${#ITEMS[@]}]: " choice || exit 0
 
     if [[ "$choice" == "0" ]]; then
-        echo -e "\nВыход."
+        echo "Выход."
         exit 0
     elif [[ "$choice" =~ ^[0-9]+$ ]] && (( choice >= 1 && choice <= ${#ITEMS[@]} )); then
         IFS='|' read -r _ title file <<< "${ITEMS[$((choice - 1))]}"

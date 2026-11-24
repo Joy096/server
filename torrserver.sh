@@ -21,9 +21,6 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-# Выход из скрипта по клавише q из любого меню
-quit_script() { echo -e "\nВыход."; exit 0; }
-
 if [[ $EUID -ne 0 ]]; then
     echo -e "${RED}❌ Этот скрипт должен выполняться с правами root!${NC}"
     exit 1
@@ -501,7 +498,7 @@ fix_vpn_config() {
 # такие пакеты фрагментируются и теряются, из-за чего бывало 0 пиров. Через TCP стабильнее.
 
 choose_profile() {
-    local back_ok="$1" ram_mb cpus rec answer
+    local ram_mb cpus rec answer
     ram_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo)
     cpus=$(nproc 2>/dev/null || echo "?")
 
@@ -511,15 +508,7 @@ choose_profile() {
     echo "Обнаружено: RAM ${ram_mb} МБ, ядер CPU: ${cpus}"
     echo "1. Слабая VPS  - кэш 200 МБ в оперативной памяти (для 1 ГБ RAM)"
     echo "2. Мощная VPS  - кэш 10 ГБ на диске (нужно от 4 ГБ RAM и свободное место на диске)"
-    if [[ -n "$back_ok" ]]; then
-        echo "0. Назад"
-        echo "q. Выйти из скрипта"
-        read -p "Выберите профиль [1/2] (Enter - рекомендуемый: ${rec}, 0 = назад, q = выйти): " answer
-        [[ "$answer" == "q" || "$answer" == "Q" ]] && quit_script
-        [[ "$answer" == "0" ]] && return 1
-    else
-        read -p "Выберите профиль [1/2] (Enter - рекомендуемый: ${rec}): " answer
-    fi
+    read -p "Выберите профиль [1/2] (Enter - рекомендуемый: ${rec}): " answer
     [[ "$answer" != "1" && "$answer" != "2" ]] && answer=$rec
 
     if [[ "$answer" == "2" ]]; then
@@ -535,7 +524,6 @@ choose_profile() {
     fi
     save_state
     echo -e "${GREEN}Выбран профиль: ${PROFILE}${NC}"
-    return 0
 }
 
 # Фильтр jq для профиля. $1 - префикс ключей ("" для плоского settings.json или ".BitTorr"), $2 - профиль
@@ -611,7 +599,7 @@ apply_profile_standalone() {
 
 # Смена профиля на лету (пункт 3 → 4)
 change_profile() {
-    choose_profile back || return
+    choose_profile
     if [[ -f "$DROPIN" ]]; then
         fix_torrserver_binding
     else
@@ -629,10 +617,6 @@ setup_vpn() {
 
     ensure_user
     install_routing_helpers
-
-    # «Назад» в выборе ниже доступен, только если VPN ещё не был настроен (старое подключение не трогали)
-    local back_ok=""
-    vpn_configured || back_ok=1
 
     if vpn_configured; then
         echo -e "${GREEN}Текущий VPN: ${VPN_LABEL:-?} (интерфейс ${CONF_NAME}, файл ${CONF})$(wg_shared && echo ', общий конфиг')${NC}"
@@ -663,27 +647,13 @@ setup_vpn() {
         echo
         echo "1. Использовать существующий туннель (второй VPN-ключ не нужен)"
         echo "2. Добавить отдельный конфиг для TorrServer"
-        if [[ -n "$back_ok" ]]; then
-            echo "0. Назад"
-            echo "q. Выйти из скрипта"
-            read -p "Выберите [1-2, Enter = 1, 0 = назад, q = выйти]: " choice
-            [[ "$choice" == "q" || "$choice" == "Q" ]] && quit_script
-            [[ "$choice" == "0" ]] && return 2
-        else
-            read -p "Выберите [1-2, Enter = 1]: " choice
-        fi
+        read -p "Выберите [1-2, Enter = 1]: " choice
         [[ "$choice" != "2" ]] && choice="1"
         if [[ "$choice" == "1" ]]; then
             if [[ ${#confs[@]} -eq 1 ]]; then
                 pick="${confs[0]}"
             else
-                if [[ -n "$back_ok" ]]; then
-                    read -p "Номер конфига [1-${#confs[@]}, 0 = назад, q = выйти]: " i
-                    [[ "$i" == "q" || "$i" == "Q" ]] && quit_script
-                    [[ "$i" == "0" ]] && return 2
-                else
-                    read -p "Номер конфига [1-${#confs[@]}]: " i
-                fi
+                read -p "Номер конфига [1-${#confs[@]}]: " i
                 if [[ ! "$i" =~ ^[0-9]+$ ]] || (( i < 1 || i > ${#confs[@]} )); then
                     echo -e "${RED}Неверный номер.${NC}"
                     return 1
@@ -1215,10 +1185,9 @@ uninstall_menu() {
     echo "2. Только VPN (WireGuard + привязка); TorrServer останется и будет работать напрямую"
     echo "3. Только TorrServer (с данными, пользователем и правилом UFW); VPN-конфиг будет отвязан"
     echo "4. Выбрать по компонентам"
-    echo "0. Назад"
-    echo "q. Выйти из скрипта"
+    echo "0. Отмена"
     local sc
-    read -p "Выберите [0-4, q = выйти]: " sc
+    read -p "Выберите [0-4]: " sc
 
     local do_r=0 do_w=0 do_t=0 do_f=0 do_u=0 do_p=0 a
     case "$sc" in
@@ -1235,7 +1204,6 @@ uninstall_menu() {
             [[ -n "$pkgs_now" ]] && ask_yn "Удалить пакеты (${pkgs_now})?" && do_p=1
             unset -f ask_yn
             ;;
-        q|Q) quit_script ;;
         0|"") echo "Отменено."; return ;;
         *) echo -e "${RED}Неверный пункт.${NC}"; return ;;
     esac
@@ -1422,21 +1390,16 @@ ts_restart() {
 }
 
 install_menu() {
-    local c rc
+    local c
     while true; do
         echo -e "\n${YELLOW}=== Установка ===${NC}"
         echo "1. Полная установка (VPN + защита + TorrServer)"
         echo "2. Только TorrServer (без VPN)"
         echo "0. Назад"
-        echo "q. Выйти из скрипта"
-        read -rp "Выберите [0-2, q = выйти]: " c || return
+        read -rp "Выберите [0-2]: " c || return
         case "$c" in
-            1) setup_vpn; rc=$?
-               (( rc == 2 )) && continue
-               (( rc == 0 )) && setup_torrserver
-               check_safety ;;
+            1) setup_vpn && setup_torrserver; check_safety ;;
             2) setup_torrserver_only ;;
-            q|Q) quit_script ;;
             0|"") return ;;
             *) echo -e "${RED}Неверный пункт.${NC}" ;;
         esac
@@ -1452,14 +1415,12 @@ vpn_menu() {
         echo "3. Выключить защиту: TorrServer напрямую, без VPN"
         echo "4. Статус VPN (интерфейс и IP)"
         echo "0. Назад"
-        echo "q. Выйти из скрипта"
-        read -rp "Выберите [0-4, q = выйти]: " c || return
+        read -rp "Выберите [0-4]: " c || return
         case "$c" in
             1) setup_vpn ;;
             2) fix_torrserver_binding ;;
             3) revert_routing ;;
             4) check_vpn ;;
-            q|Q) quit_script ;;
             0|"") return ;;
             *) echo -e "${RED}Неверный пункт.${NC}" ;;
         esac
@@ -1480,15 +1441,13 @@ torrserver_menu() {
         echo "4. Сменить профиль настроек (слабая / мощная VPS)"
         echo "5. Сертификат HTTPS: перейти в скрипт ssl.sh (выпуск и установка)"
         echo "0. Назад"
-        echo "q. Выйти из скрипта"
-        read -rp "Выберите [0-5, q = выйти]: " c || return
+        read -rp "Выберите [0-5]: " c || return
         case "$c" in
             1) if systemctl is-active --quiet "$TS_SVC"; then ts_stop; else ts_start; fi ;;
             2) ts_restart ;;
             3) check_torrserver ;;
             4) change_profile ;;
             5) run_ssl_script ;;
-            q|Q) quit_script ;;
             0|"") return ;;
             *) echo -e "${RED}Неверный пункт.${NC}" ;;
         esac
@@ -1502,12 +1461,10 @@ safety_menu() {
         echo "1. Проверка безопасности (маршруты, IP, привязка; при проблемах предложит исправить)"
         echo "2. Принудительно пересоздать правила и привязку (если проверка не помогла)"
         echo "0. Назад"
-        echo "q. Выйти из скрипта"
-        read -rp "Выберите [0-2, q = выйти]: " c || return
+        read -rp "Выберите [0-2]: " c || return
         case "$c" in
             1) check_safety ;;
             2) auto_fix ;;
-            q|Q) quit_script ;;
             0|"") return ;;
             *) echo -e "${RED}Неверный пункт.${NC}" ;;
         esac
@@ -1521,7 +1478,7 @@ while true; do
     echo "3. TorrServer (запуск, остановка, профиль, HTTPS)"
     echo "4. Проверка безопасности"
     echo "5. Удаление (вернуть систему к состоянию до установки)"
-    echo "0. Выйти из скрипта (или q)"
+    echo "0. Выход"
     read -rp "Выберите действие [0-5]: " choice || exit 0
 
     case $choice in
@@ -1530,7 +1487,7 @@ while true; do
         3) torrserver_menu ;;
         4) safety_menu ;;
         5) uninstall_menu ;;
-        0|q|Q) echo -e "\nВыход."; exit 0 ;;
+        0) echo "Выход."; exit 0 ;;
         *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
     esac
 done
