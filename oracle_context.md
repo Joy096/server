@@ -1,6 +1,6 @@
 # Проект Oracle — общий контекст, знания и история
 
-Этот файл — «память» проекта: что известно про Oracle Always Free, в каком состоянии аккаунт Vitalii, что обсуждали и решили. Описания скриптов (файлы проекта): `oracle.md`, `keepalive.md`, `qbittorrent.md`, `torrserver.md`, `ssl.md`, `jackett.md`, `rustdesk.md`, `lampa.md`.
+Этот файл — «память» проекта: что известно про Oracle Always Free, в каком состоянии аккаунт Vitalii, что обсуждали и решили. Описания скриптов (файлы проекта): `oracle.md`, `keepalive.md`, `qbittorrent.md`, `torrserver.md`, `ssl.md`, `jackett.md`, `rustdesk.md`, `lampa.md`, `main.md`.
 
 ---
 
@@ -159,3 +159,11 @@ confirm_docker_purge() {  # 0 = можно удалять, 1 = оставить
 (полная версия с образами без контейнера и службами systemd: `docker_other_users` в `jackett.sh`.)
 
 Тот же подход для остальных общих пакетов (`git`, `curl`, `ufw` и т.п.): перед `purge` показывать, что ещё их использует (для apt: список из `apt-get -s purge …`, как в `jackett.sh`), и спрашивать.
+
+---
+
+## 9. Общее меню `main.sh` (решение Vitalii 24.11.2026)
+
+`main.sh` в корне репозитория (описание: `main.md`) показывает общее меню и по выбору пункта скачивает нужный скрипт с `raw.githubusercontent.com/Joy096/server/refs/heads/main/` во временный файл, запускает его и возвращает в меню. Запуск: `wget -O main.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/main.sh && bash main.sh`.
+
+**Правило для всех чатов проекта:** когда в репозиторий добавляется новый скрипт, которого ещё не было, в `main.sh` добавить его строку в массив `ITEMS` (формат `"Раздел|Название на русском|файл.sh"`, подходящий раздел, порядок строк = порядок номеров), обновить таблицу в `main.md` и сохранить оба файла в проект (`claude/main.sh`, `claude/main.md`) и в GitHub. То же при переименовании или удалении скрипта. Не включены в меню по решению Vitalii: `updater.sh`, `aapanel_update.sh`, `lampa_update.sh`, `tg_monitoring_group_bot.sh`; скрипты `usb_chromeos_*.sh` запускаются на компьютере, а не на сервере, в меню их нет. Названия разделов и пунктов менять только по просьбе.
