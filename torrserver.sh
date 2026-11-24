@@ -1,5 +1,5 @@
 #!/bin/bash
-# torrserver_full.sh - TorrServer + любой WireGuard VPN для ЧИСТОЙ установки на Ubuntu (Oracle Cloud)
+# torrserver.sh - TorrServer + любой WireGuard VPN для ЧИСТОЙ установки на Ubuntu (Oracle Cloud)
 #
 # Работает с любым провайдером, который выдаёт конфиг WireGuard (ClearVPN, Mullvad, Proton и т.д.).
 # Название провайдера запрашивается один раз, из него получается имя интерфейса и конфига.
@@ -150,7 +150,7 @@ vpn_configured() {
     [[ -n "$VPN_NAME" && -f "$CONF" ]]
 }
 
-# --- Совместное использование WireGuard-конфига с qBittorrent (qbittorrent_full.sh) ---
+# --- Совместное использование WireGuard-конфига с qBittorrent (qbittorrent.sh) ---
 # К конфигу можно подключиться, дописав строки PostUp/PreDown. Метку "vpn-scripts-managed" ставит
 # скрипт, создавший конфиг из вставленного текста: по ней конфиг можно удалить, когда он больше никому не нужен.
 
@@ -631,7 +631,7 @@ setup_vpn() {
         save_state
     fi
 
-    # Есть ли уже WireGuard-конфиги на сервере (например, от qbittorrent_full.sh)
+    # Есть ли уже WireGuard-конфиги на сервере (например, от qbittorrent.sh)
     local confs=() f n i=1
     for f in /etc/wireguard/*.conf; do
         [[ -f "$f" ]] && confs+=("$(basename "$f" .conf)")
@@ -1151,7 +1151,7 @@ uninstall_menu() {
     user_present     && has_u=1
     pkgs_now=$(pkgs_present)
     if [[ -n "$pkgs_now" && -f /etc/qbittorrent-vpn.state ]]; then
-        # qBittorrent (qbittorrent_full.sh) использует те же системные пакеты: их не трогаем
+        # qBittorrent (qbittorrent.sh) использует те же системные пакеты: их не трогаем
         local kept="" removable="" pk
         for pk in $pkgs_now; do
             case " wireguard wireguard-tools curl ufw iproute2 python3 " in
@@ -1160,7 +1160,7 @@ uninstall_menu() {
             esac
         done
         if [[ -n "$kept" ]]; then
-            echo -e "${YELLOW}На сервере установлен qBittorrent (qbittorrent_full.sh): общие пакеты (${kept}) не удаляю, чтобы не сломать его.${NC}"
+            echo -e "${YELLOW}На сервере установлен qBittorrent (qbittorrent.sh): общие пакеты (${kept}) не удаляю, чтобы не сломать его.${NC}"
         fi
         pkgs_now="$removable"
     fi

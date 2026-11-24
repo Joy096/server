@@ -1,13 +1,13 @@
 #!/bin/bash
-# qbittorrent_full.sh - qBittorrent-nox + WireGuard VPN + kill-switch для Ubuntu (Oracle Cloud)
+# qbittorrent.sh - qBittorrent-nox + WireGuard VPN + kill-switch для Ubuntu (Oracle Cloud)
 #
-# Схема та же, что в torrserver_full.sh для TorrServer: через VPN идёт ТОЛЬКО трафик пользователя
+# Схема та же, что в torrserver.sh для TorrServer: через VPN идёт ТОЛЬКО трафик пользователя
 # "qbittorrent" (policy routing по UID). SSH, apt и всё остальное ходит напрямую.
 #   - ответы веб-интерфейса qBittorrent (порт 8080 по умолчанию) идут напрямую к вам;
 #   - kill-switch: если VPN упал, у пользователя qbittorrent нет сети вообще.
 #
 # Два сценария, скрипт определяет их сам:
-#   1) На сервере уже есть WireGuard-конфиг (например, от torrserver_full.sh для TorrServer):
+#   1) На сервере уже есть WireGuard-конфиг (например, от torrserver.sh для TorrServer):
 #      qBittorrent подключается к ТОМУ ЖЕ туннелю, второй VPN-ключ не нужен.
 #      Конфиг не пересоздаётся, к нему добавляются две строки PostUp/PreDown.
 #      TorrServer при этом продолжает работать как раньше.
@@ -16,7 +16,7 @@
 # У qBittorrent свои номера таблицы маршрутизации (101) и правил (91/101/111),
 # поэтому он не пересекается с TorrServer (100 и 90/100/110).
 #
-# Дополнительно: создание .torrent из файла или папки и запуск раздачи (как в qBittorrent.sh).
+# Дополнительно: создание .torrent из файла или папки и запуск раздачи.
 #
 # HTTPS для веб-интерфейса включает скрипт ssl.sh (пункты 1 и 2): он кладёт сертификат в /etc/qbittorrent-cert
 # и прописывает его в qBittorrent. Этот скрипт сам определяет, что HTTPS включён, и ходит в веб-интерфейс
@@ -57,7 +57,7 @@ TRACKERS_FILE="/etc/qbittorrent-trackers.txt"
 QB_CERT_DIR="/etc/qbittorrent-cert"      # сертификат для HTTPS веб-интерфейса (создаёт ssl.sh)
 SSL_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"   # пункт 3 → 7 меню
 STATE_FILE="/etc/qbittorrent-vpn.state"
-TS_STATE="/etc/torrserver-vpn.state"     # состояние torrserver_full.sh (чтобы подхватить название провайдера)
+TS_STATE="/etc/torrserver-vpn.state"     # состояние torrserver.sh (чтобы подхватить название провайдера)
 DEFAULT_WEB_PORT=8080
 
 # Состояние между запусками
@@ -353,7 +353,7 @@ validate_wg_conf() {
     return 0
 }
 
-# Правка СВОЕГО (только что вставленного) wg-конфига под нашу схему, так же как в torrserver_full.sh.
+# Правка СВОЕГО (только что вставленного) wg-конфига под нашу схему, так же как в torrserver.sh.
 # Строки, относящиеся к TorrServer (torrserver-vpn.sh), не трогаем.
 fix_vpn_config() {
     local conf_file="$1"
@@ -395,14 +395,14 @@ fix_vpn_config() {
     chmod 600 "$conf_file"
 }
 
-# Подключение к УЖЕ настроенному конфигу (например, от torrserver_full.sh): добавляем только наши строки.
+# Подключение к УЖЕ настроенному конфигу (например, от torrserver.sh): добавляем только наши строки.
 join_wg_conf() {
     local conf_file="$1"
 
     if ! grep -qiE '^[[:space:]]*Table[[:space:]]*=[[:space:]]*off' "$conf_file"; then
         echo -e "${RED}❌ В ${conf_file} нет строки «Table = off».${NC}"
         echo "   Через такой конфиг wg-quick завернёт ВЕСЬ трафик сервера в VPN, включая SSH. Подключаться к нему нельзя."
-        echo "   Выберите «добавить отдельный конфиг» или настройте этот конфиг скриптом torrserver_full.sh."
+        echo "   Выберите «добавить отдельный конфиг» или настройте этот конфиг скриптом torrserver.sh."
         return 1
     fi
 
@@ -820,7 +820,7 @@ setup_qbit_only() {
 
     install_qbittorrent_core || return 1
 
-    # Без VPN входящий порт для пиров нужен: открываем его (как в qBittorrent.sh)
+    # Без VPN входящий порт для пиров нужен: открываем его
     local jar lp
     if jar=$(api_login); then
         lp=$(curl -sk -b "$jar" "$(web_base)/api/v2/app/preferences" | grep -oP '"listen_port":\K[0-9]+')
@@ -1294,7 +1294,7 @@ uninstall_menu() {
     ufw_now=$(ufw_rules_present)
     pkgs_now=$(pkgs_present)
     if [[ -n "$pkgs_now" && -f "$TS_STATE" ]]; then
-        # TorrServer (torrserver_full.sh) использует те же системные пакеты: их не трогаем
+        # TorrServer (torrserver.sh) использует те же системные пакеты: их не трогаем
         local kept="" removable="" pk
         for pk in $pkgs_now; do
             case " wireguard wireguard-tools curl ufw jq iproute2 python3 " in
@@ -1303,7 +1303,7 @@ uninstall_menu() {
             esac
         done
         if [[ -n "$kept" ]]; then
-            echo -e "${YELLOW}На сервере установлен TorrServer (torrserver_full.sh): общие пакеты (${kept}) не удаляю, чтобы не сломать его.${NC}"
+            echo -e "${YELLOW}На сервере установлен TorrServer (torrserver.sh): общие пакеты (${kept}) не удаляю, чтобы не сломать его.${NC}"
         fi
         pkgs_now="$removable"
     fi
