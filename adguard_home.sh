@@ -97,7 +97,7 @@ while true; do
     case $choice in
         1) install_adguard ;;
         2) uninstall_adguard ;;
-        3) wget https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh && bash cloudflare_ssl.sh ;;
+        3) wget -O ssl.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh && bash ssl.sh ;;
         0) echo "Выход."; echo ""; exit ;;
         *) echo "❌ Некорректный ввод. Попробуйте снова." ;;
     esac
