@@ -22,7 +22,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Выход из скрипта по клавише q из любого меню
-quit_script() { echo "Выход."; exit 0; }
+quit_script() { echo -e "\nВыход."; exit 0; }
 
 if [[ $EUID -ne 0 ]]; then
     echo -e "${RED}❌ Этот скрипт должен выполняться с правами root!${NC}"
@@ -1530,7 +1530,7 @@ while true; do
         3) torrserver_menu ;;
         4) safety_menu ;;
         5) uninstall_menu ;;
-        0|q|Q) echo "Выход."; exit 0 ;;
+        0|q|Q) echo -e "\nВыход."; exit 0 ;;
         *) echo -e "${RED}Неверный пункт меню.${NC}" ;;
     esac
 done
