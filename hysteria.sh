@@ -263,8 +263,8 @@ install_hysteria() {
         else
             # Запускаем внешний скрипт и выходим
             info_msg "Запуск внешнего скрипта для получения сертификата..."
-            local ext_script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/cloudflare_ssl.sh"
-            local ext_script="/tmp/cloudflare_ssl.sh"
+            local ext_script_url="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/ssl.sh"
+            local ext_script="/tmp/ssl.sh"
             
             info_msg "Скачивание ${ext_script_url}..."
             
