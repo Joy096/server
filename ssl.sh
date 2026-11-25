@@ -168,19 +168,101 @@ else
     log "2. Nextcloud не найден, пропускаем."
 fi
 
+# AdGuard Home: правка блока tls: в AdGuardHome.yaml. pairs: строки «ключ=значение» (текстовые значения уже в кавычках).
+# Значения существующих ключей заменяются, недостающие ключи дописываются в конец блока (самого блока нет: он создаётся).
+agh_tls_set() {
+    local conf="$1" pairs="$2"
+    PAIRS="${pairs}" awk '
+        function flush(   i) { for (i = 1; i <= n; i++) if (!(ord[i] in seen)) print "  " ord[i] ": " val[ord[i]] }
+        BEGIN {
+            m = split(ENVIRON["PAIRS"], arr, "\n")
+            for (i = 1; i <= m; i++) {
+                p = index(arr[i], "=")
+                if (p < 2) continue
+                n++; ord[n] = substr(arr[i], 1, p - 1); val[ord[n]] = substr(arr[i], p + 1)
+            }
+        }
+        /^tls:/ { intls = 1; had = 1; print; next }
+        intls && /^[^[:space:]#]/ { flush(); intls = 0 }
+        intls && $1 ~ /:$/ { k = $1; sub(/:$/, "", k); if (k in val) { print "  " k ": " val[k]; seen[k] = 1; next } }
+        { print }
+        END { if (intls) flush(); if (!had) { print "tls:"; flush() } }
+    ' "${conf}" > "${conf}.tmp" && cat "${conf}.tmp" > "${conf}"
+    rm -f "${conf}.tmp"
+}
+# Значение ключа из блока tls: (без кавычек); если ключа нет, ничего не печатает
+agh_tls_get() {
+    awk -v k="$2" '/^tls:/{t=1;next} t&&/^[^[:space:]#]/{t=0} t&&$1==k":"{$1=""; sub(/^[[:space:]]+/,""); gsub(/"/,""); print; exit}' "$1" 2>/dev/null
+}
+
 if [ -d "/var/snap/adguard-home/" ]; then
-    log "3. Обнаружен AdGuard Home. Устанавливаем сертификат..."
-    mkdir -p "${ADGUARD_CERT_DIR}"
-    /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${ADGUARD_CERT_DIR}/private.key" --fullchain-file "${ADGUARD_CERT_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
-
+    log "3. Обнаружен AdGuard Home. Устанавливаем сертификат и включаем HTTPS..."
+    AGH_DIR="${ADGUARD_CERT_DIR%/}"
     AGH_CONFIG="/var/snap/adguard-home/current/AdGuardHome.yaml"
-    if [ -f "$AGH_CONFIG" ]; then
-        log "Прописываем новый домен в конфигурации AdGuard Home..."
-        sed -i "s/^[[:space:]]*server_name:.*/  server_name: ${DOMAIN}/" "$AGH_CONFIG"
-    fi
+    AGH_MARK="${AGH_DIR}/ssl_sh_https"      # метка: HTTPS в AdGuard Home включён через ssl.sh (по ней его выключает удаление)
+    mkdir -p "${AGH_DIR}"
+    /root/.acme.sh/acme.sh --install-cert -d "${DOMAIN}" --key-file "${AGH_DIR}/private.key" --fullchain-file "${AGH_DIR}/fullchain.pem" >> "${LOG_FILE}" 2>&1
 
-    log "Перезапускаем AdGuard Home..."
-    snap restart adguard-home >> "${LOG_FILE}" 2>&1
+    if [ ! -s "${AGH_DIR}/fullchain.pem" ] || [ ! -s "${AGH_DIR}/private.key" ]; then
+        log "AdGuard Home: сертификат не удалось скопировать в ${AGH_DIR}, HTTPS не включаю."
+        echo -e "\033[0;31m❌ AdGuard Home: не удалось скопировать сертификат, HTTPS не включён. Подробности: ${LOG_FILE}\033[0m"
+    elif [ ! -f "${AGH_CONFIG}" ]; then
+        log "AdGuard Home: нет файла настроек ${AGH_CONFIG} (первая настройка ещё не завершена), HTTPS не включаю."
+        echo "ℹ️ AdGuard Home: первая настройка ещё не завершена. Завершите её в браузере и повторите ssl.sh, пункт 2."
+    else
+        AGH_ON=0
+        [ "$(agh_tls_get "${AGH_CONFIG}" enabled)" = "true" ] && AGH_ON=1
+        # Порт HTTPS: если уже был задан, оставляем, иначе 443
+        AGH_PORT=$(agh_tls_get "${AGH_CONFIG}" port_https)
+        case "${AGH_PORT}" in ""|*[!0-9]*|0) AGH_PORT=443 ;; esac
+
+        if [ "${AGH_ON}" = "0" ] && ss -ltn 2>/dev/null | awk -v p=":${AGH_PORT}" '$4 ~ p"$" {f=1} END{exit !f}'; then
+            log "AdGuard Home: порт ${AGH_PORT} занят другой программой, HTTPS не включаю."
+            echo -e "\033[0;31m❌ AdGuard Home: порт ${AGH_PORT} уже занят другой программой, HTTPS не включён. Освободите порт и повторите пункт 2.\033[0m"
+        else
+            if [ "${AGH_PORT}" = "443" ]; then AGH_URL="https://${DOMAIN}"; else AGH_URL="https://${DOMAIN}:${AGH_PORT}"; fi
+            # Копия настроек на случай неудачи: если AdGuard Home с HTTPS не заработает, вернём как было (иначе пропадёт и DNS)
+            AGH_BAK=$(mktemp)
+            cat "${AGH_CONFIG}" > "${AGH_BAK}"
+            AGH_WAS=0
+            snap services adguard-home 2>/dev/null | awk 'NR>1{print $3}' | grep -qx 'active' && AGH_WAS=1
+            # Настройки меняем только при остановленной службе
+            snap stop adguard-home >> "${LOG_FILE}" 2>&1
+            agh_tls_set "${AGH_CONFIG}" "$(printf '%s\n' 'enabled=true' "server_name=\"${DOMAIN}\"" "port_https=${AGH_PORT}" 'certificate_chain=""' 'private_key=""' "certificate_path=\"${AGH_DIR}/fullchain.pem\"" "private_key_path=\"${AGH_DIR}/private.key\"")"
+            log "AdGuard Home: в ${AGH_CONFIG} включены параметры HTTPS (порт ${AGH_PORT})."
+
+            if [ "${AGH_WAS}" = "1" ]; then
+                log "Запускаем AdGuard Home..."
+                snap start adguard-home >> "${LOG_FILE}" 2>&1
+                AGH_CODE=""
+                for i in $(seq 1 30); do
+                    AGH_CODE=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 3 --resolve "${DOMAIN}:${AGH_PORT}:127.0.0.1" "https://${DOMAIN}:${AGH_PORT}/" 2>/dev/null)
+                    case "${AGH_CODE}" in ""|000) ;; *) break ;; esac
+                    sleep 1
+                done
+                case "${AGH_CODE}" in
+                    ""|000)
+                        log "AdGuard Home: HTTPS не ответил за 30 секунд, возвращаю прежние настройки. Смотрите: snap logs adguard-home -n 30"
+                        snap stop adguard-home >> "${LOG_FILE}" 2>&1
+                        cat "${AGH_BAK}" > "${AGH_CONFIG}"
+                        snap start adguard-home >> "${LOG_FILE}" 2>&1
+                        echo -e "\033[0;31m❌ AdGuard Home: HTTPS не ответил за 30 секунд, настройки возвращены как были. Смотрите: snap logs adguard-home -n 30\033[0m"
+                        ;;
+                    *)
+                        : > "${AGH_MARK}"
+                        log "AdGuard Home: HTTPS включён, адрес: ${AGH_URL}"
+                        echo -e "\033[0;32m✅ AdGuard Home: HTTPS включён. Заходите по адресу: ${AGH_URL}\033[0m"
+                        echo "   Обычный HTTP продолжает работать как раньше."
+                        ;;
+                esac
+            else
+                : > "${AGH_MARK}"
+                log "AdGuard Home сейчас остановлен: HTTPS применится при его следующем запуске."
+                echo "ℹ️ AdGuard Home сейчас остановлен. HTTPS применится при следующем запуске, адрес будет: ${AGH_URL}"
+            fi
+            rm -f "${AGH_BAK}"
+        fi
+    fi
 else
     log "3. AdGuard Home не найден, пропускаем."
 fi
@@ -932,6 +1014,49 @@ remove_torrserver_https() {
     rm -rf "${ts_cert_dir}"
 }
 
+# AdGuard Home: правка блока tls: в AdGuardHome.yaml (то же, что в hook-скрипте). pairs: строки «ключ=значение».
+agh_tls_set() {
+    local conf="$1" pairs="$2"
+    PAIRS="${pairs}" awk '
+        function flush(   i) { for (i = 1; i <= n; i++) if (!(ord[i] in seen)) print "  " ord[i] ": " val[ord[i]] }
+        BEGIN {
+            m = split(ENVIRON["PAIRS"], arr, "\n")
+            for (i = 1; i <= m; i++) {
+                p = index(arr[i], "=")
+                if (p < 2) continue
+                n++; ord[n] = substr(arr[i], 1, p - 1); val[ord[n]] = substr(arr[i], p + 1)
+            }
+        }
+        /^tls:/ { intls = 1; had = 1; print; next }
+        intls && /^[^[:space:]#]/ { flush(); intls = 0 }
+        intls && $1 ~ /:$/ { k = $1; sub(/:$/, "", k); if (k in val) { print "  " k ": " val[k]; seen[k] = 1; next } }
+        { print }
+        END { if (intls) flush(); if (!had) { print "tls:"; flush() } }
+    ' "${conf}" > "${conf}.tmp" && cat "${conf}.tmp" > "${conf}"
+    rm -f "${conf}.tmp"
+}
+agh_tls_get() {
+    awk -v k="$2" '/^tls:/{t=1;next} t&&/^[^[:space:]#]/{t=0} t&&$1==k":"{$1=""; sub(/^[[:space:]]+/,""); gsub(/"/,""); print; exit}' "$1" 2>/dev/null
+}
+
+# Выключает HTTPS в AdGuard Home (только если его включил ssl.sh: есть метка) и удаляет его копию сертификата
+remove_adguard_https() {
+    local cert_dir="/var/snap/adguard-home/common/certs"
+    local conf="/var/snap/adguard-home/current/AdGuardHome.yaml"
+    local was=0
+    [[ -f "${cert_dir}/ssl_sh_https" ]] || return 0
+    LOGD "Отключаем HTTPS в AdGuard Home и удаляем его копию сертификата..."
+    if [[ -f "${conf}" && "$(agh_tls_get "${conf}" enabled)" == "true" ]]; then
+        snap services adguard-home 2>/dev/null | awk 'NR>1{print $3}' | grep -qx 'active' && was=1
+        snap stop adguard-home >/dev/null 2>&1
+        agh_tls_set "${conf}" "$(printf '%s\n' 'enabled=false' 'certificate_path=""' 'private_key_path=""')"
+        (( was )) && snap start adguard-home >/dev/null 2>&1
+        LOGI "HTTPS в AdGuard Home выключен, веб-интерфейс снова работает по http://."
+    fi
+    rm -f "${cert_dir}/fullchain.pem" "${cert_dir}/private.key" "${cert_dir}/ssl_sh_https"
+    rmdir "${cert_dir}" 2>/dev/null
+}
+
 # Какие программы на сервере используют nginx, кроме той, что удаляется сейчас ($1: jackett-tls или lampa).
 # Печатает по строке «  • что именно» на каждую найденную программу; если таких нет, не печатает ничего.
 nginx_other_users() {
@@ -1041,6 +1166,7 @@ remove_jackett_https() {
 remove_acme() {
     LOGI "Начинаем удаление acme.sh..."
     remove_qbittorrent_https
+    remove_adguard_https
     remove_torrserver_https
     remove_jackett_https
     if [ -f "$HOME/.acme.sh/acme.sh" ]; then
