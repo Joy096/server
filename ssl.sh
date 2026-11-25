@@ -707,11 +707,19 @@ issue_certificate() {
     local renew_hook=$2
     local force_flag=$3  # "--force" или пусто
 
+    # Сколько секунд ждать после добавления TXT-записи, прежде чем Let's Encrypt начнёт проверку
+    local dns_sleep=60
+    if [ "$DNS_PLUGIN" == "dns_desec" ]; then
+        # У deSEC серверы имён получают запись не одновременно: при 60 секундах Let's Encrypt мог не увидеть её (No TXT record found)
+        dns_sleep=240
+        LOGD "deSEC: после добавления записей подождём ${dns_sleep} секунд, пока они дойдут до всех серверов deSEC (так надёжнее)."
+    fi
+
     if [ "$dns_choice" == "2" ]; then
         # DuckDNS - без wildcard
         ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
             -d "${domain}" \
-            --ecc --dnssleep 60 \
+            --ecc --dnssleep "${dns_sleep}" \
             ${force_flag} \
             --renew-hook "${renew_hook}" --log
     elif [ -n "$CHALLENGE_ALIAS" ]; then
@@ -720,7 +728,7 @@ issue_certificate() {
             -d "${domain}" \
             -d "*.${domain}" \
             --challenge-alias "${CHALLENGE_ALIAS}" \
-            --ecc --dnssleep 60 \
+            --ecc --dnssleep "${dns_sleep}" \
             ${force_flag} \
             --renew-hook "${renew_hook}" --log
     else
@@ -728,7 +736,7 @@ issue_certificate() {
         ~/.acme.sh/acme.sh --issue --dns "${DNS_PLUGIN}" \
             -d "${domain}" \
             -d "*.${domain}" \
-            --ecc --dnssleep 60 \
+            --ecc --dnssleep "${dns_sleep}" \
             ${force_flag} \
             --renew-hook "${renew_hook}" --log
     fi
