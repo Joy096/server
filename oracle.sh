@@ -1317,22 +1317,7 @@ servers_menu() {
     done
 }
 
-first_run_wizard() {
-    echo -e "\n${YELLOW}Похоже, вы запускаете скрипт впервые.${NC}"
-    echo "Могу провести по шагам: 1) подключить аккаунт Oracle, 2) выбрать, какой сервер искать, 3) запустить поиск в фоне."
-    yn_d "Пройти настройку по шагам?" y || return 0
-    echo -e "\n${GREEN}━━━ Шаг 1 из 3: подключение к Oracle ━━━${NC}"
-    connect_oracle
-    if (( ! ACCT_OK )); then
-        echo -e "${YELLOW}Подключение не завершено. Вернёмся в меню: повторить можно в пункте 1.${NC}"
-        return 0
-    fi
-    echo -e "\n${GREEN}━━━ Шаг 2 из 3: что искать (в конце будет шаг 3: запуск) ━━━${NC}"
-    setup_task
-}
-
 refresh_acct
-if (( ! ACCT_OK )) && [[ ! -f "$CONF_FILE" ]]; then first_run_wizard; fi
 
 while true; do
     print_home
