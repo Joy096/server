@@ -15,7 +15,7 @@
 BASE_URL="${SERVER_BASE_URL:-https://raw.githubusercontent.com/Joy096/server/refs/heads/main}"
 
 ITEMS=(
-    "Подготовка сервера|Базовая настройка нового сервера|server_new.sh"
+    "Подготовка сервера|Базовая настройка нового сервера|server_setup.sh"
     "Подготовка сервера|SSL-сертификаты и HTTPS|ssl.sh"
     "Oracle Cloud|Oracle: поиск, создание, редактирование серверов|oracle.sh"
     "Oracle Cloud|Keepalive: защита от отключения за простой|keepalive.sh"

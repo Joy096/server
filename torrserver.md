@@ -1,6 +1,6 @@
 # torrserver.sh (до 27.10.2026 назывался torrserver_full.sh) — TorrServer + WireGuard VPN с kill-switch
 
-Интерактивный скрипт для Ubuntu (Oracle Cloud). Ставит TorrServer и пускает через любой WireGuard VPN **только** трафик его пользователя. Запуск: `sudo bash torrserver.sh`. Раньше назывался `setup_all.sh`, затем `torrserver_full.sh`. 1493 строк, `bash -n` проходит. Старые имена `torrserver_full.sh` / `qbittorrent_full.sh` в комментариях и сообщениях заменены на `torrserver.sh` / `qbittorrent.sh` (24.11.2026). Рассчитан на свежий сервер после базовой настройки (`server_new.sh`, его пункт меню 1), но умеет подхватывать уже существующую установку.
+Интерактивный скрипт для Ubuntu (Oracle Cloud). Ставит TorrServer и пускает через любой WireGuard VPN **только** трафик его пользователя. Запуск: `sudo bash torrserver.sh`. Раньше назывался `setup_all.sh`, затем `torrserver_full.sh`. 1493 строк, `bash -n` проходит. Старые имена `torrserver_full.sh` / `qbittorrent_full.sh` в комментариях и сообщениях заменены на `torrserver.sh` / `qbittorrent.sh` (24.11.2026). Рассчитан на свежий сервер после базовой настройки (`server_setup.sh`, его пункт меню 1), но умеет подхватывать уже существующую установку.
 
 Парные файлы: `qbittorrent.sh` / `qbittorrent.md` (та же схема для qBittorrent, они делят один WireGuard-туннель) и `ssl.sh` / `ssl.md` (сертификат и HTTPS).
 
