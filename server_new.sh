@@ -69,9 +69,31 @@ sudo dpkg-reconfigure -f noninteractive locales # Переконфигуриру
 # Настройка часового пояса
 sudo timedatectl set-timezone Europe/Kyiv
 
-# Добавление задания в cron для пользователя root если его нет
+# Скрипт ночного обновления системы лежит прямо на сервере (из интернета он не скачивается)
+UPDATER="/usr/local/sbin/server-updater.sh"
+sudo tee "$UPDATER" > /dev/null <<'UPDATER_EOF'
+#!/bin/bash
+
+apt update
+apt --yes full-upgrade
+yes Y | apt autoremove
+sleep 120  # Задержка в 120 секунд (2 минуты)
+# Removes old revisions of snaps
+# CLOSE ALL SNAPS BEFORE RUNNING THIS
+set -eu
+snap list --all | awk '/disabled/{print $1, $3}' |
+    while read snapname revision; do
+        snap remove "$snapname" --revision="$revision"
+    done
+/sbin/reboot
+UPDATER_EOF
+sudo chmod 755 "$UPDATER"
+
+# Добавление задания в cron для пользователя root: ежедневно в 4:00 запускается скрипт выше.
+# Старое задание (оно скачивало updater.sh с GitHub) убирается, чтобы обновление не запускалось дважды.
 CRON_USER="root"
-CRON_JOB="0 4 * * * curl -fsSL 'https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh' | bash > '/root/updater.log' 2>&1"
+CRON_JOB="0 4 * * * $UPDATER > '/root/updater.log' 2>&1"
+OLD_CRON_PATTERN="raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh"
 CRON_HEADER="# Edit this file to introduce tasks to be run by cron.
 # 
 # Each task to run has to be defined through a single line
@@ -97,14 +119,16 @@ CRON_HEADER="# Edit this file to introduce tasks to be run by cron.
 # m h  dom mon dow   command"
 
 CRON_TEMP=$(mktemp)
-CURRENT_CRONTAB=$(sudo crontab -u "$CRON_USER" -l 2>/dev/null) 
+CURRENT_CRONTAB=$(sudo crontab -u "$CRON_USER" -l 2>/dev/null)
+CLEAN_CRONTAB=$(grep -vF "$OLD_CRON_PATTERN" <<< "$CURRENT_CRONTAB")
 
-if ! grep -qF "$CRON_JOB" <<< "$CURRENT_CRONTAB"; then
-  printf "%s\n" "$CRON_HEADER" > "$CRON_TEMP"
-  if [ -n "$CURRENT_CRONTAB" ]; then
-      printf "%s\n" "$CURRENT_CRONTAB" >> "$CRON_TEMP"
+if ! grep -qF "$CRON_JOB" <<< "$CLEAN_CRONTAB" || [ "$CLEAN_CRONTAB" != "$CURRENT_CRONTAB" ]; then
+  if [ -n "$CLEAN_CRONTAB" ]; then
+      printf "%s\n" "$CLEAN_CRONTAB" > "$CRON_TEMP"
+  else
+      printf "%s\n" "$CRON_HEADER" > "$CRON_TEMP"
   fi
-  printf "%s\n" "$CRON_JOB" >> "$CRON_TEMP"
+  grep -qF "$CRON_JOB" "$CRON_TEMP" || printf "%s\n" "$CRON_JOB" >> "$CRON_TEMP"
 
   sudo crontab -u "$CRON_USER" "$CRON_TEMP"
 fi

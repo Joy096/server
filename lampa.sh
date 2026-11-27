@@ -16,8 +16,8 @@ REPO_URL="https://github.com/yumata/lampa.git" # Репозиторий с ГО�
 DEFAULT_PORT=80 # Порт по умолчанию
 LOG_FILE="/root/lampa_update.log" # Лог файл для автообновления
 CRON_MARKER="# LAMPACRON_GITHUB_AUTOUPDATE" # Маркер для cron задачи
-# URL скрипта обновления (предоставлен пользователем)
-GITHUB_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa_update.sh"
+LAMPA_UPDATER="/usr/local/sbin/lampa-update.sh" # Скрипт автообновления: создаётся на сервере при установке
+TARGET_BRANCH="main" # Ветка репозитория Lampa, из которой идёт обновление
 # URL скрипта установки Torrserver
 TORRSERVER_SCRIPT_URL="https://raw.githubusercontent.com/Joy096/server/refs/heads/main/torrserver.sh"
 
@@ -125,6 +125,75 @@ ask_for_port() {
         fi
     done
     echo "$chosen_port"
+}
+
+# Создаёт на сервере скрипт автообновления Lampa (его запускает cron, из интернета он не скачивается)
+write_lampa_updater() {
+    {
+        echo '#!/bin/bash'
+        printf 'SOURCE_DIR=%q\nINSTALL_DIR=%q\nREPO_URL=%q\nTARGET_BRANCH=%q\n' \
+            "$SOURCE_DIR" "$INSTALL_DIR" "$REPO_URL" "$TARGET_BRANCH"
+        cat <<'UPDATER_EOF'
+
+echo ""
+echo "🔄 [$(date '+%Y-%m-%d %H:%M:%S')] Запуск автообновления Lampa..."
+
+# 1. Переход в директорию / клонирование при необходимости
+if ! cd "${SOURCE_DIR}" &> /dev/null; then
+  rm -rf "${SOURCE_DIR}"
+  git clone --quiet "${REPO_URL}" "${SOURCE_DIR}" || {
+    echo "❌ [$(date '+%F %T')] Ошибка: Не удалось клонировать ${REPO_URL}."
+    exit 1
+  }
+  cd "${SOURCE_DIR}" || {
+    echo "❌ [$(date '+%F %T')] Ошибка: Не удалось перейти в ${SOURCE_DIR} после клонирования."
+    exit 1
+  }
+fi
+
+# 2. Обновление локального репозитория
+git fetch origin || {
+  echo "❌ [$(date '+%F %T')] Ошибка: 'git fetch' не удался."
+  exit 1
+}
+git reset --hard "origin/${TARGET_BRANCH}" || {
+  echo "❌ [$(date '+%F %T')] Ошибка: 'git reset --hard' не удался."
+  exit 1
+}
+git clean -fdx
+
+# 3. Копирование обновлённых файлов
+if [[ -d "${INSTALL_DIR}" ]]; then
+  rm -rf "${INSTALL_DIR}"/* || {
+    echo "❌ [$(date '+%F %T')] Не удалось очистить ${INSTALL_DIR}."
+    exit 1
+  }
+else
+  mkdir -p "${INSTALL_DIR}" || {
+    echo "❌ [$(date '+%F %T')] Не удалось создать ${INSTALL_DIR}."
+    exit 1
+  }
+fi
+
+shopt -s dotglob
+cp -r ./* "${INSTALL_DIR}/" || {
+  echo "❌ [$(date '+%F %T')] Не удалось скопировать файлы."
+  shopt -u dotglob
+  exit 1
+}
+shopt -u dotglob
+rm -rf "${INSTALL_DIR}/.git"
+
+# 4. Права
+chown -R www-data:www-data "$INSTALL_DIR" &> /dev/null
+chmod -R 755 "$INSTALL_DIR" &> /dev/null
+
+echo "✅ [$(date '+%Y-%m-%d %H:%M:%S')] Автообновление Lampa завершено успешно."
+echo ""
+exit 0
+UPDATER_EOF
+    } > "$LAMPA_UPDATER" || return 1
+    chmod 755 "$LAMPA_UPDATER"
 }
 
 # Функция установки Lampa
@@ -264,12 +333,13 @@ EOF
         echo "ℹ️ UFW не установлен. Откройте порт ${nginx_port} вручную."
     fi
 
-    # Добавление Cron задачи
+    # Скрипт автообновления и задача cron
     echo ""
-    echo "Добавление задачи автообновления в cron (ежедневно в 3:00)..."
+    echo "Создание скрипта автообновления ${LAMPA_UPDATER} и задачи cron (ежедневно в 3:00)..."
+    write_lampa_updater || { echo "❌ ОШИБКА: Не удалось создать ${LAMPA_UPDATER}."; return 1; }
     ( crontab -l 2>/dev/null | grep -v "$CRON_MARKER"; \
-      echo "0 3 * * * curl -sL '$GITHUB_SCRIPT_URL' | bash > '$LOG_FILE' $CRON_MARKER" ) | crontab - || { echo "❌ ОШИБКА: Не удалось добавить задачу в cron."; }
-    echo "✅ Задача Cron добавлена."
+      echo "0 3 * * * '$LAMPA_UPDATER' > '$LOG_FILE' 2>&1 $CRON_MARKER" ) | crontab - || { echo "❌ ОШИБКА: Не удалось добавить задачу в cron."; }
+    echo "✅ Скрипт автообновления и задача Cron созданы."
 
     # Финальное сообщение
     echo ""
@@ -292,8 +362,8 @@ rm_lampa_cron() {
     else
         echo "ℹ️ Cron не найден."
     fi
-    echo "Удаление ${LOG_FILE}...";
-    rm -f "$LOG_FILE"
+    echo "Удаление ${LAMPA_UPDATER} и ${LOG_FILE}...";
+    rm -f "$LAMPA_UPDATER" "$LOG_FILE"
 }
 
 # Сайт Lampa в nginx. Параметр "no_reload": не трогать работу nginx (пакет сейчас будет удалён).
@@ -361,7 +431,7 @@ uninstall_lampa() {
     echo "Удаление Lampa"
     [[ -f "$NGINX_CONF_FILE" || -L "$NGINX_SITES_ENABLED/$NGINX_CONF_NAME" ]] && has_site=1
     [[ -d "$INSTALL_DIR" || -d "$SOURCE_DIR" ]] && has_files=1
-    if crontab -l 2>/dev/null | grep -q "$CRON_MARKER" || [[ -f "$LOG_FILE" ]]; then has_cron=1; fi
+    if crontab -l 2>/dev/null | grep -q "$CRON_MARKER" || [[ -f "$LOG_FILE" || -f "$LAMPA_UPDATER" ]]; then has_cron=1; fi
     ports=$(lampa_ufw_ports | tr '\n' ' '); ports="${ports% }"
     [[ -n "$ports" ]] && has_ufw=1
     for pkg in $PKGS_ADDED; do
@@ -379,7 +449,7 @@ uninstall_lampa() {
     echo "Найдено:"
     (( has_site ))  && echo "  • сайт Lampa в nginx: ${NGINX_CONF_FILE} (порт ${port:-не определён})"
     (( has_files )) && echo "  • файлы Lampa: ${INSTALL_DIR} и клон репозитория ${SOURCE_DIR}"
-    (( has_cron ))  && echo "  • автообновление: задача cron (ежедневно в 3:00) и журнал ${LOG_FILE}"
+    (( has_cron ))  && echo "  • автообновление: задача cron (ежедневно в 3:00), скрипт ${LAMPA_UPDATER} и журнал ${LOG_FILE}"
     (( has_ufw ))   && echo "  • правило UFW (Lampa HTTP): порт ${ports}"
     (( has_nginx )) && echo "  • пакет nginx (поставлен скриптом при установке Lampa)"
     [[ -n "$pkgs" ]] && echo "  • другие пакеты, поставленные скриптом: ${pkgs}"
@@ -407,7 +477,7 @@ uninstall_lampa() {
         2)
             (( has_site ))  && ask_no "Удалить сайт Lampa из nginx?" && d_site=1
             (( has_files )) && ask_no "Удалить файлы Lampa (${INSTALL_DIR} и ${SOURCE_DIR})?" && d_files=1
-            (( has_cron ))  && ask_no "Удалить автообновление (cron и журнал)?" && d_cron=1
+            (( has_cron ))  && ask_no "Удалить автообновление (cron, скрипт и журнал)?" && d_cron=1
             (( has_ufw ))   && ask_no "Удалить правило UFW (порт ${ports})?" && d_ufw=1
             (( has_nginx )) && ask_no "Удалить пакет nginx?" && d_nginx=1
             [[ -n "$pkgs" ]] && ask_no "Удалить пакеты (${pkgs})?" && d_pkg=1
@@ -425,7 +495,7 @@ uninstall_lampa() {
     echo "Будет удалено:"
     (( d_site ))  && echo "  ✗ сайт Lampa в nginx"
     (( d_files )) && echo "  ✗ файлы Lampa и клон репозитория"
-    (( d_cron ))  && echo "  ✗ автообновление (cron и журнал)"
+    (( d_cron ))  && echo "  ✗ автообновление (cron, скрипт и журнал)"
     (( d_ufw ))   && echo "  ✗ правило UFW (порт ${ports})"
     (( d_nginx )) && echo "  ✗ пакет nginx (с проверкой, не нужен ли он другим программам)"
     (( d_pkg ))   && echo "  ✗ пакеты: ${pkgs}"
