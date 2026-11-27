@@ -18,10 +18,6 @@
     ```bash
     wget -O server_setup.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/server_setup.sh && sudo bash server_setup.sh
     ```
-*   **[`updater.sh`](https://github.com/Joy096/server/raw/refs/heads/main/updater.sh):** Обновление системы (`apt full-upgrade`), удаление старых версий snap и перезагрузка. `server_setup.sh` ставит его в cron на 04:00 каждую ночь. ⚠️ Перезагружает сервер.
-    ```bash
-    wget -O updater.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh && sudo bash updater.sh
-    ```
 *   **[`aapanel_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/aapanel_update.sh):** Обновление панели aaPanel: запускает `bt 16`.
     ```bash
     wget -O aapanel_update.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/aapanel_update.sh && sudo bash aapanel_update.sh
@@ -75,10 +71,6 @@
     ```bash
     wget -O lampa.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa.sh && sudo bash lampa.sh
     ```
-*   **[`lampa_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa_update.sh):** Обновляет Lampa из репозитория `yumata/lampa` и копирует файлы в `/var/www/lampa`. Рассчитан на запуск из cron.
-    ```bash
-    wget -O lampa_update.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa_update.sh && sudo bash lampa_update.sh
-    ```
 
 #### ☁️ Oracle Cloud
 
@@ -128,7 +120,7 @@
 *   **Права Root:** **Большинство скриптов необходимо запускать с правами суперпользователя (`root` или через `sudo`),** так как они устанавливают ПО и изменяют системные настройки. Исключения без `sudo` указаны в их описании: `tg_monitoring_group_bot.sh`, `usb_chromeos_ubuntu.sh`, `usb_chromeos_win.sh`.
 *   **Просмотр перед запуском:** Всегда просматривайте код скрипта перед его выполнением на сервере, особенно при запуске от имени `root`. Убедитесь, что вы понимаете, какие команды он будет выполнять.
 *   **Совместимость:** Скрипты в основном ориентированы на Debian/Ubuntu. Работа на других дистрибутивах не гарантируется. Некоторые скрипты используют Snap, а скрипты для Oracle Cloud рассчитаны на серверы Oracle.
-*   **Перезагрузка:** `server_setup.sh` и `updater.sh` в конце перезагружают сервер.
+*   **Перезагрузка:** `server_setup.sh` в конце перезагружает сервер, а ночное автообновление, которое он ставит (в 4:00), тоже перезагружает его.
 *   **Самоудаление:** Скрипты `server_setup.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` и `hysteria.sh` удаляют себя после завершения. Это не проблема: команда из списка при необходимости скачает их заново.
 *   **Резервные копии:** Перед применением скриптов, особенно `server_setup.sh`, рекомендуется сделать резервную копию важных данных или системы.
 *   **"Как есть":** Скрипты предоставляются "как есть", без гарантий. Используйте их на свой страх и риск.
@@ -150,10 +142,6 @@
 *   **[`server_setup.sh`](https://github.com/Joy096/server/raw/refs/heads/main/server_setup.sh):** Початкове налаштування нового сервера: оновлення системи, брандмауер UFW (SSH, 80, 443), BBR, локаль і часовий пояс, копіювання SSH-ключів у root, нічне автооновлення через cron. ⚠️ Наприкінці перезавантажує сервер. Запускайте першим.
     ```bash
     wget -O server_setup.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/server_setup.sh && sudo bash server_setup.sh
-    ```
-*   **[`updater.sh`](https://github.com/Joy096/server/raw/refs/heads/main/updater.sh):** Оновлення системи (`apt full-upgrade`), видалення старих версій snap і перезавантаження. `server_setup.sh` ставить його в cron на 04:00 щоночі. ⚠️ Перезавантажує сервер.
-    ```bash
-    wget -O updater.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh && sudo bash updater.sh
     ```
 *   **[`aapanel_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/aapanel_update.sh):** Оновлення панелі aaPanel: запускає `bt 16`.
     ```bash
@@ -208,10 +196,6 @@
     ```bash
     wget -O lampa.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa.sh && sudo bash lampa.sh
     ```
-*   **[`lampa_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa_update.sh):** Оновлює Lampa з репозиторію `yumata/lampa` і копіює файли в `/var/www/lampa`. Розрахований на запуск із cron.
-    ```bash
-    wget -O lampa_update.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa_update.sh && sudo bash lampa_update.sh
-    ```
 
 #### ☁️ Oracle Cloud
 
@@ -261,7 +245,7 @@
 *   **Права Root:** **Більшість скриптів необхідно запускати з правами суперкористувача (`root` або через `sudo`),** оскільки вони встановлюють ПЗ та змінюють системні налаштування. Винятки без `sudo` зазначені в їхньому описі: `tg_monitoring_group_bot.sh`, `usb_chromeos_ubuntu.sh`, `usb_chromeos_win.sh`.
 *   **Перегляд перед запуском:** Завжди переглядайте код скрипта перед його виконанням на сервері, особливо під час запуску від імені `root`. Переконайтеся, що ви розумієте, які команди він виконуватиме.
 *   **Сумісність:** Скрипти переважно орієнтовані на Debian/Ubuntu. Робота на інших дистрибутивах не гарантується. Деякі скрипти використовують Snap, а скрипти для Oracle Cloud розраховані на сервери Oracle.
-*   **Перезавантаження:** `server_setup.sh` та `updater.sh` наприкінці перезавантажують сервер.
+*   **Перезавантаження:** `server_setup.sh` наприкінці перезавантажує сервер, а нічне автооновлення, яке він ставить (о 4:00), теж його перезавантажує.
 *   **Самовидалення:** Скрипти `server_setup.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` та `hysteria.sh` видаляють себе після завершення. Це не проблема: команда зі списку за потреби завантажить їх знову.
 *   **Резервні копії:** Перед застосуванням скриптів, особливо `server_setup.sh`, рекомендується зробити резервну копію важливих даних або системи.
 *   **"Як є":** Скрипти надаються "як є", без гарантій. Використовуйте їх на свій ризик.
@@ -283,10 +267,6 @@ Every script below comes with a ready-made command: it downloads the file (repla
 *   **[`server_setup.sh`](https://github.com/Joy096/server/raw/refs/heads/main/server_setup.sh):** Initial setup of a new server: system update, UFW firewall (SSH, 80, 443), BBR, locale and timezone, copying SSH keys to root, nightly auto-update via cron. ⚠️ Reboots the server at the end. Run it first.
     ```bash
     wget -O server_setup.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/server_setup.sh && sudo bash server_setup.sh
-    ```
-*   **[`updater.sh`](https://github.com/Joy096/server/raw/refs/heads/main/updater.sh):** System update (`apt full-upgrade`), removal of old snap revisions and a reboot. `server_setup.sh` schedules it in cron for 04:00 every night. ⚠️ Reboots the server.
-    ```bash
-    wget -O updater.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh && sudo bash updater.sh
     ```
 *   **[`aapanel_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/aapanel_update.sh):** Updates the aaPanel control panel: runs `bt 16`.
     ```bash
@@ -341,10 +321,6 @@ Every script below comes with a ready-made command: it downloads the file (repla
     ```bash
     wget -O lampa.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa.sh && sudo bash lampa.sh
     ```
-*   **[`lampa_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa_update.sh):** Updates Lampa from the `yumata/lampa` repository and copies the files to `/var/www/lampa`. Designed to be run from cron.
-    ```bash
-    wget -O lampa_update.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa_update.sh && sudo bash lampa_update.sh
-    ```
 
 #### ☁️ Oracle Cloud
 
@@ -394,7 +370,7 @@ Every script below comes with a ready-made command: it downloads the file (repla
 *   **Root Privileges:** **Most scripts must be run with superuser privileges (`root` or via `sudo`)** as they install software and modify system settings. The exceptions that run without `sudo` are marked in their descriptions: `tg_monitoring_group_bot.sh`, `usb_chromeos_ubuntu.sh`, `usb_chromeos_win.sh`.
 *   **Review Before Running:** Always review the script's code before executing it on your server, especially when running as `root`. Ensure you understand the commands it will run.
 *   **Compatibility:** Scripts are primarily targeted at Debian/Ubuntu. Functionality on other distributions is not guaranteed. Some scripts use Snap, and the Oracle Cloud scripts are meant for Oracle servers.
-*   **Reboot:** `server_setup.sh` and `updater.sh` reboot the server at the end.
+*   **Reboot:** `server_setup.sh` reboots the server at the end, and the nightly auto-update it sets up (at 4:00) reboots it too.
 *   **Self-Deletion:** The scripts `server_setup.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` and `hysteria.sh` delete themselves upon completion. That is fine: the command from the list downloads them again when needed.
 *   **Backups:** Before applying scripts, especially `server_setup.sh`, it is recommended to back up important data or the system.
 *   **"As Is":** The scripts are provided "as is" without warranty. Use them at your own risk.
@@ -416,10 +392,6 @@ Każdy skrypt poniżej ma gotowe polecenie: pobiera plik (zastępując starszą 
 *   **[`server_setup.sh`](https://github.com/Joy096/server/raw/refs/heads/main/server_setup.sh):** Wstępna konfiguracja nowego serwera: aktualizacja systemu, zapora UFW (SSH, 80, 443), BBR, ustawienia regionalne i strefa czasowa, kopiowanie kluczy SSH do roota, nocna automatyczna aktualizacja przez cron. ⚠️ Na końcu restartuje serwer. Uruchom go jako pierwszy.
     ```bash
     wget -O server_setup.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/server_setup.sh && sudo bash server_setup.sh
-    ```
-*   **[`updater.sh`](https://github.com/Joy096/server/raw/refs/heads/main/updater.sh):** Aktualizacja systemu (`apt full-upgrade`), usunięcie starych wersji snap i restart. `server_setup.sh` dodaje go do crona na 04:00 każdej nocy. ⚠️ Restartuje serwer.
-    ```bash
-    wget -O updater.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/updater.sh && sudo bash updater.sh
     ```
 *   **[`aapanel_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/aapanel_update.sh):** Aktualizacja panelu aaPanel: uruchamia `bt 16`.
     ```bash
@@ -474,10 +446,6 @@ Każdy skrypt poniżej ma gotowe polecenie: pobiera plik (zastępując starszą 
     ```bash
     wget -O lampa.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa.sh && sudo bash lampa.sh
     ```
-*   **[`lampa_update.sh`](https://github.com/Joy096/server/raw/refs/heads/main/lampa_update.sh):** Aktualizuje Lampa z repozytorium `yumata/lampa` i kopiuje pliki do `/var/www/lampa`. Przeznaczony do uruchamiania z crona.
-    ```bash
-    wget -O lampa_update.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/lampa_update.sh && sudo bash lampa_update.sh
-    ```
 
 #### ☁️ Oracle Cloud
 
@@ -527,7 +495,7 @@ Każdy skrypt poniżej ma gotowe polecenie: pobiera plik (zastępując starszą 
 *   **Uprawnienia Root:** **Większość skryptów musi być uruchamiana z uprawnieniami superużytkownika (`root` lub przez `sudo`),** ponieważ instalują oprogramowanie i modyfikują ustawienia systemowe. Wyjątki uruchamiane bez `sudo` są zaznaczone w ich opisach: `tg_monitoring_group_bot.sh`, `usb_chromeos_ubuntu.sh`, `usb_chromeos_win.sh`.
 *   **Przegląd przed uruchomieniem:** Zawsze przeglądaj kod skryptu przed jego wykonaniem na serwerze, zwłaszcza podczas uruchamiania jako `root`. Upewnij się, że rozumiesz, jakie polecenia zostaną wykonane.
 *   **Kompatybilność:** Skrypty są głównie przeznaczone dla systemów Debian/Ubuntu. Działanie na innych dystrybucjach nie jest gwarantowane. Niektóre skrypty używają Snap, a skrypty dla Oracle Cloud są przeznaczone dla serwerów Oracle.
-*   **Restart:** `server_setup.sh` i `updater.sh` na końcu restartują serwer.
+*   **Restart:** `server_setup.sh` na końcu restartuje serwer, a nocna automatyczna aktualizacja, którą ustawia (o 4:00), też go restartuje.
 *   **Samousunięcie:** Skrypty `server_setup.sh`, `x-ui.sh`, `adguard_home.sh`, `outline_vpn.sh`, `lampa.sh` i `hysteria.sh` usuwają się po zakończeniu. To nie problem: polecenie z listy w razie potrzeby pobierze je ponownie.
 *   **Kopie zapasowe:** Przed zastosowaniem skryptów, zwłaszcza `server_setup.sh`, zaleca się wykonanie kopii zapasowej ważnych danych lub systemu.
 *   **"Tak jak jest":** Skrypty są dostarczane "tak jak są", bez żadnej gwarancji. Używaj ich na własne ryzyko.

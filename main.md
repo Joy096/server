@@ -29,7 +29,7 @@ wget -O main.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/
 | 13 | Прочее | AdGuard Home: блокировка рекламы | `adguard_home.sh` |
 | 14 | Прочее | Minecraft Bedrock: игровые серверы | `minecraft_bedrock.sh` |
 
-Не включены по решению Vitalii: `updater.sh`, `aapanel_update.sh`, `lampa_update.sh`, `tg_monitoring_group_bot.sh`. Скрипты `usb_chromeos_ubuntu.sh` и `usb_chromeos_win.sh` запускаются на компьютере, а не на сервере, поэтому в меню их нет.
+Не включены по решению Vitalii: `aapanel_update.sh`, `tg_monitoring_group_bot.sh`. Скрипты `usb_chromeos_ubuntu.sh` и `usb_chromeos_win.sh` запускаются на компьютере, а не на сервере, поэтому в меню их нет.
 
 ## Как это работает
 
@@ -45,5 +45,6 @@ wget -O main.sh https://raw.githubusercontent.com/Joy096/server/refs/heads/main/
 
 ## История
 
+- 27.11.2026: `updater.sh` и `lampa_update.sh` удалены из репозитория (их заменили скрипты на сервере, см. `server_setup.md` и `lampa.md`); из списка «не включены» убраны.
 - 27.11.2026: пункт 1 переименован: `server_new.sh` → `server_setup.sh` (название пункта то же).
 - 24.11.2026: создан; в тот же день убрана пауза «Нажмите Enter, чтобы показать меню». 14 пунктов, 5 разделов. `bash -n` проходит, тест на заглушках пройден (пункты, неверный ввод, пустой файл, файл без shebang, отсутствующий файл, нет `curl`/`wget`, удаление временных файлов).
